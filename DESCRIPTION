@@ -1,0 +1,27 @@
+Package: WWER
+Title: Welch Weighted Egger Regression
+Version: 0.0.0.0
+Author: Brielin C. Brown
+Maintainer: Brielin C. Brown <brielin.b@columbia.edu>
+Description: A library for simulating data from a bi-directional Mendelian
+  Randomization model, plus a simple method (WWE regression) for fitting it.
+License: file LICENSE
+Encoding: UTF-8
+LazyData: true
+Imports:
+    stats,
+    dplyr,
+    purrr,
+    tibble,
+    tidyr,
+    readr,
+    plyr,
+    foreach
+Suggests: 
+    testthat (>= 2.1.0),
+    mr.raps,
+    MendelianRandomization,
+    MRPRESSO,
+    MRMix,
+    cause
+RoxygenNote: 7.1.1

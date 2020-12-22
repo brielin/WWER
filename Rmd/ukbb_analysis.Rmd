@@ -1,0 +1,163 @@
+# Load Packages
+```{r}
+# install.packages("/gpfs/commons/home/bbrown/ukbb_network/inspre", repos = NULL, type = "source")
+require(inspre)
+require(tidyverse)
+require(foreach)
+require(igraph)
+require(devtools)
+require(egg)
+require(GGally)
+devtools::load_all()
+```
+
+
+# Load summary statistics
+```{r}
+file_pattern_gencor_male = "/gpfs/commons/projects/UKBB/sumstats/filtered/*.male_filtered.tsv.gz"
+file_pattern_gencor_female = "/gpfs/commons/projects/UKBB/sumstats/filtered/*.female_filtered.tsv.gz"
+save_select_sumstats = "/gpfs/commons/home/bbrown/ukbb_network/saved_rdata/select_sumstats.Rdata"
+save_fit_sumstats = "/gpfs/commons/home/bbrown/ukbb_network/saved_rdata/fit_sumstats.Rdata"
+
+# sumstats <- read_sumstats_neale(file_pattern = file_pattern_gencor_male)
+# save(sumstats, file = save_select_sumstats)
+# rm(sumstats)
+sumstats <- read_sumstats_neale(file_pattern = file_pattern_gencor_female)
+save(sumstats, file = save_fit_sumstats)
+rm(sumstats)
+```
+
+# Select instruments
+```{r}
+p_thresh = 5e-6
+file_pattern_snp_list = "/gpfs/commons/projects/UKBB/sumstats/clumped/*/all.snps"
+save_snps = "/gpfs/commons/home/bbrown/ukbb_network/saved_rdata/selected_snps_5e-6.Rdata"
+
+load(save_select_sumstats)
+snps_to_use <- read_snp_list(file_pattern_snp_list)
+selected_snps <- select_snps(sumstats, snps_to_use, p_thresh = p_thresh, verbose = TRUE)
+save(selected_snps, file = save_snps)
+```
+
+# Fit TCE matrix
+```{r}
+save_tce_res = "/gpfs/commons/home/bbrown/ukbb_network/saved_rdata/tce_res.Rdata"
+
+load(save_fit_sumstats)
+load(save_snps)
+tce_res <- fit_tce(sumstats, selected_snps, mr_method = "egger_w",
+                   min_instruments = 10, verbose = TRUE)
+save(tce_res, file = save_tce_res)
+```
+
+# Calculate some descriptive statistics for the TCE results.
+```{r}
+pivot_tce <- function(R_tce, SE_tce, N_obs){
+  plot_data <- tidyr::pivot_longer(
+    as_tibble(R_tce, rownames="Exposure"), -Exposure,
+    names_to="Outcome", values_to = "R_tce")
+  plot_data$SE_tce <- tidyr::pivot_longer(
+    as_tibble(SE_tce, rownames="Exposure"), -Exposure,
+    names_to="Outcome", values_to = "SE_tce")[["SE_tce"]]
+  plot_data$N_obs <- tidyr::pivot_longer(
+    as_tibble(N_obs, rownames="Exposure"), -Exposure,
+    names_to="Outcome", values_to = "N_obs")[["N_obs"]]
+  plot_data <- plot_data %>% dplyr::mutate(
+    Z_score = R_tce/SE_tce, p_val = 2 * (1 - stats::pnorm(abs(Z_score))))
+  plot_data$p_val[is.infinite(plot_data$Z_score)] = 1
+  plot_data$p_val[is.na(plot_data$Z_score)] = 1
+  return(plot_data)
+}
+
+save_tce_res = "/gpfs/commons/home/bbrown/ukbb_network/saved_rdata/tce_res.Rdata"
+rg_result_file = "/gpfs/commons/home/bbrown/ukbb_network/saved_rdata/rg_results.Rdata"
+
+load(save_tce_res)
+load(rg_result_file)
+
+tce_filt <- filter_tce(tce_res$R_tce, tce_res$SE_tce, max_R = 1, max_SE = 0.5, max_nan_perc = 0.5)
+R_tce <- tce_filt$R_tce
+SE_tce <- tce_filt$SE_tce
+N_obs <- tce_res$N_obs[rownames(R_tce), rownames(R_tce)]
+phenotypes <- rownames(R_tce)
+
+N_phenos <- nrow(R_tce)
+data <- pivot_tce(R_tce, SE_tce, N_obs) %>% dplyr::left_join(select(rg_results, -c(starts_with("mf"))), by = c("Exposure" = "phenotype.1", "Outcome" = "phenotype.2"))
+
+rho <- matrix(data$rg, nrow = length(phenotypes))
+diag(rho) <- 1
+ord_rho <- hclust(as.dist(sqrt(2*(1-abs(rho)))))$order
+
+n_nans = sum(is.na(R_tce))
+perc_nans = n_nans/(N_phenos*N_phenos - N_phenos)
+num_nominal_sig = sum(data$p_val < 0.05, na.rm = TRUE)
+data$p_fdr <- stats::p.adjust(data$p_val, method="fdr")
+num_fwer_sig = sum(stats::p.adjust(data$p_val, method="holm") < 0.05, na.rm=TRUE)
+num_fdr_sig = sum(data$p_fdr < 0.05, na.rm=TRUE)
+
+ggplot(data, aes(x=p_val)) + geom_density()
+data %>% ggplot(aes(x=N_obs)) + geom_density() + scale_x_continuous(trans="log10")
+ggplot(data, aes(x=SE_tce)) + geom_density() + xlim(0, 1)
+ggplot(data, aes(x=R_tce)) + geom_density() + xlim(-1, 1)
+data %>% filter(p_fdr < 0.05) %>% ggplot(aes(x=R_tce)) + geom_density() + xlim(-1, 1)
+```
+
+```{r}
+ggplot(data, aes(y=Exposure, x=Outcome)) + geom_tile(aes(fill=rg)) +
+  scale_x_discrete(limits = phenotypes[ord_rho], labels = NULL) +
+  scale_y_discrete(limits = phenotypes[rev(ord_rho)], labels = NULL) +
+  scale_fill_gradient2(limits = c(-1, 1)) +
+#  labs(x = NULL, y = NULL, title = "a) Genetic correlation") +
+#  guides(fill = FALSE) +
+  theme(plot.title = element_text(size=10), axis.ticks=element_blank()) + coord_fixed()
+
+ggplot(data, aes(y=Exposure, x=Outcome)) + geom_tile(aes(fill=R_tce)) +
+  scale_x_discrete(limits = phenotypes[ord_rho], labels = NULL) +
+  scale_y_discrete(limits = phenotypes[rev(ord_rho)], labels = NULL) +
+  scale_fill_gradient2(limits = c(-1, 1)) +
+#  labs(x = NULL, y = NULL, title = "a) Genetic correlation") +
+#  guides(fill = FALSE) +
+  theme(plot.title = element_text(size=10), axis.ticks=element_blank()) + coord_fixed()
+
+tibble("logpv" = c(0:20), "correlation" = map_dbl(exp(-c(0:20)), ~ cor(data$R_tce[data$p_fdr < .x], data$rg[data$p_fdr < .x]))) %>% 
+  ggplot(aes(x = logpv, y=correlation)) + geom_line() + scale_x_continuous(trans=c("log1p"))
+```
+
+```{r}
+load("/gpfs/commons/home/bbrown/ukbb_network/saved_rdata/selected_phenotypes.Rdata")
+
+# 98, 99, 103, 104, 105, 106, 119, 120, 122, 124 334-335, 400
+imid = selected_phenos$phenotype[c(98, 99, 103, 104, 105, 106, 119, 120, 122, 124, 334, 335, 400)]
+# 207-233, 235, 237-253
+biomarkers = selected_phenos$phenotype[c(207:233, 235, 237:253)]
+
+data_bd <- data %>% dplyr::filter(Exposure %in% biomarkers, Outcome %in% imid)
+data_db <- data %>% dplyr::filter(Exposure %in% imid, Outcome %in% biomarkers)
+
+data_bd %>% dplyr::mutate(R_tce = ifelse(SE_tce < 0.5, R_tce, NA)) %>%
+  ggplot(aes(y=Exposure, x=Outcome)) + geom_tile(aes(fill=R_tce)) + scale_fill_gradient2()
+
+data_db %>% dplyr::mutate(R_tce = ifelse(SE_tce < 0.5, R_tce, NA)) %>%
+  ggplot(aes(y=Exposure, x=Outcome)) + geom_tile(aes(fill=R_tce)) + scale_fill_gradient2()
+
+data_bd %>% dplyr::mutate(mlogp = -sign(R_tce)*log10(p_val)) %>%
+  ggplot(aes(y=Exposure, x=Outcome)) + geom_tile(aes(fill=mlogp)) + scale_fill_gradient2()
+
+data_db %>% dplyr::mutate(mlogp = -sign(R_tce)*log10(p_val)) %>%
+  ggplot(aes(y=Exposure, x=Outcome)) + geom_tile(aes(fill=mlogp)) + scale_fill_gradient2()
+```
+
+
+```{r}
+data_bd %>% group_by(Exposure) %>% mutate(n_sig_eff = sum(p_fdr < 0.05)) %>% distinct(Exposure, description.1, n_sig_eff) %>% arrange(desc(n_sig_eff))
+data_db %>% group_by(Exposure) %>% mutate(n_sig_eff = sum(p_fdr < 0.05)) %>% distinct(Exposure, description.1, n_sig_eff) %>% arrange(desc(n_sig_eff))
+
+data_bd %>% arrange(p_val)
+```
+
+
+```{r}
+sig_bd = data_bd %>% filter(p_fdr < 0.05)
+sig_db = data_db %>% filter(p_fdr < 0.05)
+sig_bd %>% inner_join(sig_db, by = c("Exposure" = "Outcome", "Outcome" = "Exposure")) %>% select(Exposure, Outcome, R_tce.x, SE_tce.x, R_tce.y, SE_tce.y, description.1.x, description.2.x) %>% view()
+```

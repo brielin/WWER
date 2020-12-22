@@ -1,0 +1,740 @@
+```{r}
+library(tidyverse)
+library(foreach)
+library(doMC)
+library(scales)
+library(egg)
+library(MendelianRandomization)
+library(cause)
+library(MRMix)
+library(MRPRESSO)
+library(rslurm)
+library(WWER)
+```
+
+
+```{r}
+# Some helper functions to assist in simualting and generating plots.
+
+# Note that this closes over a globally defined n_cores variable.
+run_sim_niter <- function(name, n_iter, Na, Nb, M, ha, hb, hu, nu, eta, gamma, delta, p, q, r, s, af_ref_file = NULL){
+  doMC::registerDoMC(cores = n_cores)
+  print(c(n_cores, n_iter, Na, Nb, M, ha, hb, hu, nu, eta, gamma, delta, p, q, r, s))
+  res_tibble = foreach(iter = 1:n_iter, .combine = bind_rows) %dopar% {
+    run_sim(name, iter, Na, Nb, M, ha, hb, hu, nu, eta, gamma, delta, p, q, r, s, af_ref_file)
+  }
+  return(res_tibble)
+}
+
+
+se <- function(x, na.rm = FALSE){
+  sqrt(var(x, na.rm = na.rm)/length(x))
+}
+
+
+make_summary_tibble <- function(plot_tibble){
+  summary_tibble <- plot_tibble %>%
+    dplyr::group_by(name, method, mr_method, p_thresh, Na, Nb, M, ha, hb, hu, nu, eta, gamma, delta, q, r, s, Rab, Rba) %>% 
+    mutate(stat_ab = mean(pab < 0.05, na.rm=T), stat_ba = mean(pba < 0.05, na.rm=T),
+           se_stat_ab := se(pab < 0.05, na.rm=T), se_stat_ba := se(pba < 0.05, na.rm=T),
+           mae_ab = mean(abs(Rab - Rab_hat), na.rm=T), mae_ba = mean(abs(Rba - Rba_hat), na.rm=T),
+           se_mae_ab = se(abs(Rab - Rab_hat), na.rm=T), se_mae_ba = se(abs(Rba - Rba_hat), na.rm=T),
+           Rab_hat = mean(Rab_hat, na.rm=T), Rba_hat = mean(Rba_hat, na.rm=T),
+           Sab_hat = mean(Sab_hat, na.rm=T), Sba_hat = mean(Sba_hat, na.rm=T),
+           runtime = mean(runtime, na.rm=T), rg = mean(rg)) %>%
+    ungroup() %>%
+    distinct(name, method, mr_method, p_thresh, Na, Nb, M, ha, hb, hu, rg, nu, eta, gamma, delta, q, r, s, Rab, Rba,
+             stat_ab, stat_ba, se_stat_ab, se_stat_ba, mae_ab, mae_ba, se_mae_ab, se_mae_ba,
+             Rab_hat, Rba_hat, Sab_hat, Sba_hat, runtime)
+  return(summary_tibble)
+}
+
+
+reverselog_trans <- function(base = exp(1)) {
+  trans <- function(x) -log(x, base)
+  inv <- function(x) base^(-x)
+  trans_new(paste0("reverselog-", format(base)), trans, inv,
+            log_breaks(base = base), domain = c(1e-100, Inf))
+}
+```
+
+
+```{r}
+# Setup simulations df for rslurm.
+n_iter = 100
+
+af_ref_file <- "/gpfs/commons/projects/UKBB/sumstats/ldsc_results/eur_w_ld_chr/19.l2.ldscore.gz"
+
+# Simulations matching LCV main.
+M_lcv = 500000
+
+h = 0.3
+eta_lcv = c(0, sqrt(0.1), sqrt(0.2), sqrt(0.4), sqrt(0.6))
+nu_lcv = c(0, sqrt(0.1), sqrt(0.2), sqrt(0.4), sqrt(0.6))
+p_lcv = c(5000, 4750, 4500, 4000, 3500)/M_lcv
+q_lcv = (nu_lcv**2)/(2-nu_lcv**2) # c(0, 0.053, 0.111, 0.286, 0.429)
+r_lcv = (1-q_lcv)/2
+
+sim_lcv_1 = tibble(
+  name = "Equal power, equal architecture.",
+  n_iter = n_iter, Na = 100000, Nb = 100000, M = M_lcv,
+  ha = h, hb = h, hu = h,
+  nu = nu_lcv, eta = eta_lcv, gamma = 0.0, delta = 0.0,
+  p = p_lcv, q = q_lcv, r = r_lcv, s = r_lcv, af_ref_file = af_ref_file)
+
+sim_lcv_2 = tibble(
+  name = "Study 1 higher power, equal architecture.",
+  n_iter = n_iter, Na = 100000, Nb = 20000, M = M_lcv,
+  ha = h, hb = h, hu = h,
+  nu = nu_lcv, eta = eta_lcv, gamma = 0.0, delta = 0.0,
+  p = p_lcv, q = q_lcv, r = r_lcv, s = r_lcv, af_ref_file = af_ref_file)
+
+
+r_lcv = (1-q_lcv)/3
+s_lcv = 2*(1-q_lcv)/3
+sim_lcv_3 = tibble(
+  name = "Equal power, trait 2 less polygenic.",
+  n_iter = n_iter, Na = 100000, Nb = 100000, M = M_lcv,
+  ha = h, hb = h, hu = h,
+  nu = nu_lcv, eta = eta_lcv, gamma = 0.0, delta = 0.0,
+  p = p_lcv, q = q_lcv, r = r_lcv, s = s_lcv, af_ref_file = af_ref_file)
+
+sim_lcv_4 = tibble(
+  name = "Study 1 higher power, trait 2 less polygenic.",
+  n_iter = n_iter, Na = 100000, Nb = 20000, M = M_lcv,
+  ha = h, hb = h, hu = h,
+  nu = nu_lcv, eta = eta_lcv, gamma = 0.0, delta = 0.0,
+  p = p_lcv, q = q_lcv, r = r_lcv, s = s_lcv, af_ref_file = af_ref_file)
+
+sim_settings_lcv <- dplyr::bind_rows(sim_lcv_1, sim_lcv_2, sim_lcv_3, sim_lcv_4)
+
+sim_settings_lcv_data <- sim_settings_lcv %>%
+  dplyr::rowwise() %>% dplyr::mutate(vars=list(h2_to_s2(M, ha, hb, hu, nu, eta, gamma, delta, p, q, r, s))) %>%
+  dplyr::mutate(sa = vars$sa, sb= vars$sb, su = vars$su, Ma = M*p*r, Mb = M*p*s, Mu = M*p*q) %>% dplyr::select(-vars)
+```
+
+```{r}
+# Note: There does not appear to be a way to have rslurm request multiple CPUs
+#   on a node (e.g. for doMC) without also distributing multiple jobs over them.
+#   Thus this sets submit=F so I can manually edit the CPUs per node requested
+#   in the submission script.
+# TODO(brielin): Right now the bimmer functions need to be loaded with
+#  devtools::load_all(), then passed via add_objects. Figure out how to do it
+#  via just loading the package.
+n_cores = 8 # Need to edit this into the submit.sh script.
+sjob_lcv <- rslurm::slurm_apply(
+  run_sim_niter, sim_settings_lcv, jobname = "bimr_lcv", nodes = nrow(sim_settings_lcv),
+  cpus_per_node = 1, slurm_options = list(time = "36:00:00", mem = "32G"),
+  add_objects = c("n_cores"),
+  submit = F)
+```
+
+```{r}
+# Simulations matching CAUSE main.
+af_ref_file <- "/gpfs/commons/projects/UKBB/sumstats/ldsc_results/eur_w_ld_chr/19.l2.ldscore.gz"
+n_iter = 100
+h = 0.25
+q_cause = c(0, 0.05, 0.111, 0.222, 0.333)  # shared/all = (0.10, 0.19, 0.36, 0.5)
+M_cause = 500000
+M_eff_cause = ceiling((2/(q_cause + 1))*1000)
+p_cause = M_eff_cause/M_cause
+r_cause = (1-q_cause)/2
+nu_cause = sqrt(h)  # Using nu = sqrt(h) means hu = 0.5 when q = 1/3
+hu_cause = (M_cause*q_cause/(M_cause*q_cause + M_cause*r_cause)) * (h / nu_cause**2)
+
+# 50k = 100-110 sig
+# 20k = 15-30 sig
+# 15k = 6-15
+sim_cause_1 = tibble(
+  name = "Equal power, weak shared effect",
+  n_iter = n_iter, Na = 50000, Nb = 50000, M = M_cause,
+  ha = h, hb = h, hu = hu_cause,
+  nu = nu_cause, eta = sqrt(0.02)*nu_cause, gamma = 0.0, delta = 0.0,
+  p = p_cause, q = q_cause, r = r_cause, s = r_cause, af_ref_file = af_ref_file)
+
+sim_cause_2 = tibble(
+  name = "Equal power, stronger shared effect",
+  n_iter = n_iter, Na = 50000, Nb = 50000, M = M_cause,
+  ha = h, hb = h, hu = hu_cause,
+  nu = nu_cause, eta = sqrt(0.05)*nu_cause, gamma = 0.0, delta = 0.0,
+  p = p_cause, q = q_cause, r = r_cause, s = r_cause, af_ref_file = af_ref_file)
+
+sim_cause_3 = tibble(
+  name = "Study 2 higher power, stronger shared effect",
+  n_iter = n_iter, Na = 20000, Nb = 50000, M = M_cause,
+  ha = h, hb = h, hu = hu_cause,
+  nu = nu_cause, eta = sqrt(0.05)*nu_cause, gamma = 0.0, delta = 0.0,
+  p = p_cause, q = q_cause, r = r_cause, s = r_cause, af_ref_file = af_ref_file)
+
+sim_cause_4 = tibble(
+  name = "Study 1 higher power, stronger shared effect",
+  n_iter = n_iter, Na = 50000, Nb = 20000, M = M_cause,
+  ha = h, hb = h, hu = hu_cause,
+  nu = nu_cause, eta = sqrt(0.05)*nu_cause, gamma = 0.0, delta = 0.0,
+  p = p_cause, q = q_cause, r = r_cause, s = r_cause, af_ref_file = af_ref_file)
+
+
+sim_settings_cause <- dplyr::bind_rows(sim_cause_1, sim_cause_2, sim_cause_3,  sim_cause_4) # %>%
+  # dplyr::rowwise() %>% dplyr::mutate(vars=list(h2_to_s2(M, ha, hb, hu, nu, eta, gamma, delta, p, q, r, s))) %>%
+  # dplyr::mutate(sa = vars$sa, sb= vars$sb, su = vars$su, Ma = M*p*r, Mb = M*p*s, Mu = M*p*q) %>% dplyr::select(-vars)
+```
+
+```{r}
+n_cores = 8
+sjob_cause <- rslurm::slurm_apply(
+  run_sim_niter, sim_settings_cause, jobname = "bimr_cause", nodes = nrow(sim_settings_cause),
+  cpus_per_node = 1, slurm_options = list(time = "36:00:00", mem = "32G"),
+  add_objects = c("n_cores"),
+  submit = F)
+```
+
+```{r}
+# New sims with different polyG separated from conf effect sizes. Equal sample sizes.
+h = 0.3
+Na = 100000
+Nb = 100000
+nu_asym = c(sqrt(0.1), sqrt(0.3), sqrt(0.3))
+eta_asym = c(sqrt(0.3), sqrt(0.1), sqrt(0.3))
+nu_sym = c(sqrt(0.1), sqrt(0.3))
+eta_sym = c(sqrt(0.3), sqrt(0.3))
+M_l = 500
+M_h = 2000
+M_new = 500000
+
+M_lhh = 2*M_h + 1*M_l
+p_lhh = M_lhh/M_new
+q_lhh = M_l/M_lhh
+r_lhh = M_h/M_lhh
+s_lhh = M_h/M_lhh
+sim_lhh <- tibble(
+  name = "PolyG: high A, high B, low U; Na = Nb",
+  n_iter = n_iter, Na = Na, Nb = Nb, M = M_new,
+  ha = h, hb = h, hu = h, nu = nu_sym, eta = eta_sym, gamma = 0, delta = 0,
+  p = p_lhh, q = q_lhh, r = r_lhh, s = s_lhh, af_ref_file = af_ref_file
+)
+
+M_lhl = 1*M_h + 2*M_l
+p_lhl = M_lhl/M_new
+q_lhl = M_l/M_lhl
+r_lhl = M_h/M_lhl
+s_lhl = M_l/M_lhl
+sim_lhl <- tibble(
+  name = "PolyG: high A, low B, low U; Na = Nb",
+  n_iter = n_iter, Na = Na, Nb = Nb, M = M_new,
+  ha = h, hb = h, hu = h, nu = nu_asym, eta = eta_asym, gamma = 0, delta = 0,
+  p = p_lhl, q = q_lhl, r = r_lhl, s = s_lhl, af_ref_file = af_ref_file
+)
+
+M_new = 500000
+M_lll = 3*M_l
+p_lll = M_lll/M_new
+q_lll = M_l/M_lll
+r_lll = M_l/M_lll
+s_lll = M_l/M_lll
+sim_lll <- tibble(
+  name = "PolyG: low A, low B, low U; Na = Nb",
+  n_iter = n_iter, Na = Na, Nb = Nb, M = M_new,
+  ha = h, hb = h, hu = h, nu = nu_sym, eta = eta_sym, gamma = 0, delta = 0,
+  p = p_lll, q = q_lll, r = r_lll, s = s_lll, af_ref_file = af_ref_file
+)
+
+M_hhh = 3*M_h
+p_hhh = M_hhh/M_new
+q_hhh = M_h/M_hhh
+r_hhh = M_h/M_hhh
+s_hhh = M_h/M_hhh
+sim_hhh <- tibble(
+  name = "PolyG: high A, high B, high U; Na = Nb",
+  n_iter = n_iter, Na = Na, Nb = Nb, M = M_new,
+  ha = h, hb = h, hu = h, nu = nu_sym, eta = eta_sym, gamma = 0, delta = 0,
+  p = p_hhh, q = q_hhh, r = r_hhh, s = s_hhh, af_ref_file = af_ref_file
+)
+
+M_hhl = 2*M_h + 1*M_l
+p_hhl = M_hlh/M_new
+q_hhl = M_h/M_hhl
+r_hhl = M_h/M_hhl
+s_hhl = M_l/M_hhl
+sim_hhl <- tibble(
+  name = "PolyG: high A, low B, high U; Na = Nb",
+  n_iter = n_iter, Na = Na, Nb = Nb, M = M_new,
+  ha = h, hb = h, hu = h, nu = nu_asym, eta = eta_asym, gamma = 0, delta = 0,
+  p = p_hhl, q = q_hhl, r = r_hhl, s = s_hhl, af_ref_file = af_ref_file
+)
+
+M_hll = 1*M_h + 2*M_l
+p_hll = M_hll/M_new
+q_hll = M_h/M_hll
+r_hll = M_l/M_hll
+s_hll = M_l/M_hll
+sim_hll <- tibble(
+  name = "PolyG: low A, low B, high U; Na = Nb",
+  n_iter = n_iter, Na = Na, Nb = Nb, M = M_new,
+  ha = h, hb = h, hu = h, nu = nu_sym, eta = eta_sym, gamma = 0, delta = 0,
+  p = p_hll, q = q_hll, r = r_hll, s = s_hll, af_ref_file = af_ref_file
+)
+
+sim_settings_polyg_equal <- dplyr::bind_rows(sim_lhh, sim_lhl, sim_lll, sim_hhh, sim_hhl, sim_hll) # %>%
+#  dplyr::rowwise() %>% dplyr::mutate(vars=list(h2_to_s2(M, ha, hb, hu, nu, eta, gamma, delta, p, q, r, s))) %>%
+#  dplyr::mutate(sa = vars$sa, sb= vars$sb, su = vars$su, Ma = M*p*r, Mb = M*p*s, Mu = M*p*q) %>% dplyr::select(-vars)
+```
+
+
+```{r}
+n_cores = 8
+sjob_polyg_equal <- rslurm::slurm_apply(
+  run_sim_niter, sim_settings_polyg_equal, jobname = "bimr_polyg_equal", nodes = nrow(sim_settings_polyg_equal),
+  cpus_per_node = 1, slurm_options = list(time = "36:00:00", mem = "40G"),
+  add_objects = c("n_cores"),
+  submit = F)
+```
+
+
+```{r}
+# New sims with different polyG separated from conf effect sizes. Nb smaller.
+h = 0.3
+Na = 100000
+Nb = 25000
+nu_asym = c(sqrt(0.1), sqrt(0.3), sqrt(0.3))
+eta_asym = c(sqrt(0.3), sqrt(0.1), sqrt(0.3))
+nu_sym = c(sqrt(0.1), sqrt(0.3))
+eta_sym = c(sqrt(0.3), sqrt(0.3))
+M_l = 500
+M_h = 2000
+
+M_lhh = 2*M_h + 1*M_l
+p_lhh = M_lhh/M_new
+q_lhh = M_l/M_lhh
+r_lhh = M_h/M_lhh
+s_lhh = M_h/M_lhh
+sim_lhh <- tibble(
+  name = "PolyG: high A, high B, low U; Na > Nb",
+  n_iter = n_iter, Na = Na, Nb = Nb, M = M_new,
+  ha = h, hb = h, hu = h, nu = nu_sym, eta = eta_sym, gamma = 0, delta = 0,
+  p = p_lhh, q = q_lhh, r = r_lhh, s = s_lhh, af_ref_file = af_ref_file
+)
+
+M_lhl = 1*M_h + 2*M_l
+p_lhl = M_lhl/M_new
+q_lhl = M_l/M_lhl
+r_lhl = M_h/M_lhl
+s_lhl = M_l/M_lhl
+sim_lhl <- tibble(
+  name = "PolyG: high A, low B, low U; Na > Nb",
+  n_iter = n_iter, Na = Na, Nb = Nb, M = M_new,
+  ha = h, hb = h, hu = h, nu = nu_asym, eta = eta_asym, gamma = 0, delta = 0,
+  p = p_lhl, q = q_lhl, r = r_lhl, s = s_lhl, af_ref_file = af_ref_file
+)
+
+M_new = 500000
+M_lll = 3*M_l
+p_lll = M_lll/M_new
+q_lll = M_l/M_lll
+r_lll = M_l/M_lll
+s_lll = M_l/M_lll
+sim_lll <- tibble(
+  name = "PolyG: low A, low B, low U; Na > Nb",
+  n_iter = n_iter, Na = Na, Nb = Nb, M = M_new,
+  ha = h, hb = h, hu = h, nu = nu_sym, eta = eta_sym, gamma = 0, delta = 0,
+  p = p_lll, q = q_lll, r = r_lll, s = s_lll, af_ref_file = af_ref_file
+)
+
+M_hhh = 3*M_h
+p_hhh = M_hhh/M_new
+q_hhh = M_h/M_hhh
+r_hhh = M_h/M_hhh
+s_hhh = M_h/M_hhh
+sim_hhh <- tibble(
+  name = "PolyG: high A, high B, high U; Na > Nb",
+  n_iter = n_iter, Na = Na, Nb = Nb, M = M_new,
+  ha = h, hb = h, hu = h, nu = nu_sym, eta = eta_sym, gamma = 0, delta = 0,
+  p = p_hhh, q = q_hhh, r = r_hhh, s = s_hhh, af_ref_file = af_ref_file
+)
+
+M_hhl = 2*M_h + 1*M_l
+p_hhl = M_hlh/M_new
+q_hhl = M_h/M_hhl
+r_hhl = M_h/M_hhl
+s_hhl = M_l/M_hhl
+sim_hhl <- tibble(
+  name = "PolyG: high A, low B, high U; Na > Nb",
+  n_iter = n_iter, Na = Na, Nb = Nb, M = M_new,
+  ha = h, hb = h, hu = h, nu = nu_asym, eta = eta_asym, gamma = 0, delta = 0,
+  p = p_hhl, q = q_hhl, r = r_hhl, s = s_hhl, af_ref_file = af_ref_file
+)
+
+M_hll = 1*M_h + 2*M_l
+p_hll = M_hll/M_new
+q_hll = M_h/M_hll
+r_hll = M_l/M_hll
+s_hll = M_l/M_hll
+sim_hll <- tibble(
+  name = "PolyG: low A, low B, high U; Na > Nb",
+  n_iter = n_iter, Na = Na, Nb = Nb, M = M_new,
+  ha = h, hb = h, hu = h, nu = nu_sym, eta = eta_sym, gamma = 0, delta = 0,
+  p = p_hll, q = q_hll, r = r_hll, s = s_hll, af_ref_file = af_ref_file
+)
+
+sim_settings_polyg_Nb_small <- dplyr::bind_rows(sim_lhh, sim_lhl, sim_lll, sim_hhh, sim_hhl, sim_hll) # %>%
+#  dplyr::rowwise() %>% dplyr::mutate(vars=list(h2_to_s2(M, ha, hb, hu, nu, eta, gamma, delta, p, q, r, s))) %>%
+#  dplyr::mutate(sa = vars$sa, sb= vars$sb, su = vars$su, Ma = M*p*r, Mb = M*p*s, Mu = M*p*q) %>% dplyr::select(-vars)
+```
+
+```{r}
+n_cores = 8
+sjob_polyg_Nb_small <- rslurm::slurm_apply(
+  run_sim_niter, sim_settings_polyg_Nb_small, jobname = "bimr_polyg_Nb_small", nodes = nrow(sim_settings_polyg_Nb_small),
+  cpus_per_node = 1, slurm_options = list(time = "36:00:00", mem = "40G"),
+  add_objects = c("n_cores"),
+  submit = F)
+```
+
+```{r}
+# New sims with different polyG separated from conf effect sizes. Na smaller.
+h = 0.3
+Na = 25000
+Nb = 100000
+nu_asym = c(sqrt(0.1), sqrt(0.3), sqrt(0.3))
+eta_asym = c(sqrt(0.3), sqrt(0.1), sqrt(0.3))
+nu_sym = c(sqrt(0.1), sqrt(0.3))
+eta_sym = c(sqrt(0.3), sqrt(0.3))
+M_l = 500
+M_h = 2000
+
+M_lhh = 2*M_h + 1*M_l
+p_lhh = M_lhh/M_new
+q_lhh = M_l/M_lhh
+r_lhh = M_h/M_lhh
+s_lhh = M_h/M_lhh
+sim_lhh <- tibble(
+  name = "PolyG: high A, high B, low U; Na < Nb",
+  n_iter = n_iter, Na = Na, Nb = Nb, M = M_new,
+  ha = h, hb = h, hu = h, nu = nu_sym, eta = eta_sym, gamma = 0, delta = 0,
+  p = p_lhh, q = q_lhh, r = r_lhh, s = s_lhh, af_ref_file = af_ref_file
+)
+
+M_lhl = 1*M_h + 2*M_l
+p_lhl = M_lhl/M_new
+q_lhl = M_l/M_lhl
+r_lhl = M_h/M_lhl
+s_lhl = M_l/M_lhl
+sim_lhl <- tibble(
+  name = "PolyG: high A, low B, low U; Na < Nb",
+  n_iter = n_iter, Na = Na, Nb = Nb, M = M_new,
+  ha = h, hb = h, hu = h, nu = nu_asym, eta = eta_asym, gamma = 0, delta = 0,
+  p = p_lhl, q = q_lhl, r = r_lhl, s = s_lhl, af_ref_file = af_ref_file
+)
+
+M_new = 500000
+M_lll = 3*M_l
+p_lll = M_lll/M_new
+q_lll = M_l/M_lll
+r_lll = M_l/M_lll
+s_lll = M_l/M_lll
+sim_lll <- tibble(
+  name = "PolyG: low A, low B, low U; Na < Nb",
+  n_iter = n_iter, Na = Na, Nb = Nb, M = M_new,
+  ha = h, hb = h, hu = h, nu = nu_sym, eta = eta_sym, gamma = 0, delta = 0,
+  p = p_lll, q = q_lll, r = r_lll, s = s_lll, af_ref_file = af_ref_file
+)
+
+M_hhh = 3*M_h
+p_hhh = M_hhh/M_new
+q_hhh = M_h/M_hhh
+r_hhh = M_h/M_hhh
+s_hhh = M_h/M_hhh
+sim_hhh <- tibble(
+  name = "PolyG: high A, high B, high U; Na < Nb",
+  n_iter = n_iter, Na = Na, Nb = Nb, M = M_new,
+  ha = h, hb = h, hu = h, nu = nu_sym, eta = eta_sym, gamma = 0, delta = 0,
+  p = p_hhh, q = q_hhh, r = r_hhh, s = s_hhh, af_ref_file = af_ref_file
+)
+
+M_hhl = 2*M_h + 1*M_l
+p_hhl = M_hlh/M_new
+q_hhl = M_h/M_hhl
+r_hhl = M_h/M_hhl
+s_hhl = M_l/M_hhl
+sim_hhl <- tibble(
+  name = "PolyG: high A, low B, high U; Na < Nb",
+  n_iter = n_iter, Na = Na, Nb = Nb, M = M_new,
+  ha = h, hb = h, hu = h, nu = nu_asym, eta = eta_asym, gamma = 0, delta = 0,
+  p = p_hhl, q = q_hhl, r = r_hhl, s = s_hhl, af_ref_file = af_ref_file
+)
+
+M_hll = 1*M_h + 2*M_l
+p_hll = M_hll/M_new
+q_hll = M_h/M_hll
+r_hll = M_l/M_hll
+s_hll = M_l/M_hll
+sim_hll <- tibble(
+  name = "PolyG: low A, low B, high U; Na < Nb",
+  n_iter = n_iter, Na = Na, Nb = Nb, M = M_new,
+  ha = h, hb = h, hu = h, nu = nu_sym, eta = eta_sym, gamma = 0, delta = 0,
+  p = p_hll, q = q_hll, r = r_hll, s = s_hll, af_ref_file = af_ref_file
+)
+
+sim_settings_polyg_Na_small <- dplyr::bind_rows(sim_lhh, sim_lhl, sim_lll, sim_hhh, sim_hhl, sim_hll) # %>%
+#  dplyr::rowwise() %>% dplyr::mutate(vars=list(h2_to_s2(M, ha, hb, hu, nu, eta, gamma, delta, p, q, r, s))) %>%
+#  dplyr::mutate(sa = vars$sa, sb= vars$sb, su = vars$su, Ma = M*p*r, Mb = M*p*s, Mu = M*p*q) %>% dplyr::select(-vars)
+```
+
+```{r}
+n_cores = 8
+sjob_polyg_Na_small <- rslurm::slurm_apply(
+  run_sim_niter, sim_settings_polyg_Na_small, jobname = "bimr_polyg_Na_small", nodes = nrow(sim_settings_polyg_Na_small),
+  cpus_per_node = 1, slurm_options = list(time = "36:00:00", mem = "40G"),
+  add_objects = c("n_cores"),
+  submit = F)
+```
+
+
+
+```{r}
+sjob_lcv <- rslurm::slurm_job(jobname = "bimr_lcv", nodes = nrow(sim_settings_lcv))
+sjob_cause <- rslurm::slurm_job(jobname = "bimr_cause", nodes = nrow(sim_settings_cause))
+sjob_polyg <- rslurm::slurm_job(jobname = "bimr_polyg", nodes = nrow(sim_settings_polyg))
+```
+
+```{r}
+lcv_results <- rslurm::get_slurm_out(sjob_lcv, outtype = "table")
+cause_results <- rslurm::get_slurm_out(sjob_cause, outtype = "table")
+polyg_equal_results <- rslurm::get_slurm_out(sjob_polyg_equal, outtype = "table")
+polyg_Na_small_results <- rslurm::get_slurm_out(sjob_polyg_Na_small, outtype = "table")
+polyg_Nb_small_results <- rslurm::get_slurm_out(sjob_polyg_Nb_small, outtype = "table")
+```
+
+```{r}
+lcv_results_summary <- make_summary_tibble(lcv_results)
+cause_results_summary <- make_summary_tibble(cause_results)
+polyg_equal_results_summary <- make_summary_tibble(polyg_equal_results)
+polyg_Na_small_results_summary <- make_summary_tibble(polyg_Na_small_results)
+polyg_Nb_small_results_summary <- make_summary_tibble(polyg_Nb_small_results)
+
+polyg_all_summary <- rbind(polyg_equal_results_summary, polyg_Na_small_results_summary, polyg_Nb_small_results_summary)
+```
+
+
+```{r, fig.height = 10, fig.width = 12}
+theme_set(theme_classic())
+
+show_methods = c("egger_5e-8", "egger_wf_5e-8", "egger_s_5e-8", "cause_1e-3", "ivw_5e-8", "mr_mix_5e-8", "mr_presso_5e-8")
+# show_methods = c("egger_5e-8", "egger_wa_5e-8", "egger_wf_5e-8", "egger_s_5e-8")
+show_labels = c("test")
+
+g1 <- lcv_results_summary %>% 
+  filter(method %in% show_methods) %>% 
+  ggplot() + 
+  # geom_line(aes(x=q, y=stat_ab, color=method)) + 
+  geom_line(aes(x=rg, y=stat_ab, color=method)) +
+  geom_errorbar(aes(ymin = stat_ab - 1.96*se_stat_ab, ymax = stat_ab + 1.96*se_stat_ab, x = rg), width = 0.025) +
+  facet_wrap(vars(name), nrow=1) + 
+  scale_color_brewer(labels = c("CAUSE", "Egger", "Steiger", "WWER", "IVW", "MR Mix", "MR PRESSO"), palette = "Dark2") +
+  labs(x = NULL, title = "a) Simulations under LCV model.", y = "FPR, A to B") + guides(color = FALSE)
+
+g2 <- lcv_results_summary %>%
+  filter(method %in% show_methods) %>% 
+  ggplot() + 
+  # geom_line(aes(x=q, y=stat_ab, color=method)) + 
+  geom_line(aes(x=rg, y=stat_ba, color=method)) +
+  geom_errorbar(aes(ymin = stat_ba - 1.96*se_stat_ba, ymax = stat_ba + 1.96*se_stat_ba, x = rg), width = 0.025) +
+  facet_wrap(vars(name), nrow=1) +
+  scale_color_brewer(labels = c("CAUSE", "Egger", "Steiger", "WWER", "IVW", "MR Mix", "MR PRESSO"), palette = "Dark2", name = "Method") +
+  labs(x = "Genetic correlation", title = NULL, y = "FPR, B to A") + guides(color = FALSE)
+
+g3 <- cause_results_summary %>% 
+  filter(method %in% show_methods) %>% 
+  ggplot() + 
+  # geom_line(aes(x=q, y=stat_ab, color=method)) + 
+  geom_line(aes(x=q, y=stat_ab, color=method)) +
+  geom_errorbar(aes(ymin = stat_ab - 1.96*se_stat_ab, ymax = stat_ab + 1.96*se_stat_ab, x = q), width = 0.015) +
+  facet_wrap(vars(name), nrow=1) + 
+  scale_color_brewer(labels = c("CAUSE", "Egger", "Steiger", "WWER", "IVW", "MR Mix", "MR PRESSO"), palette = "Dark2") +
+  labs(x = NULL, title = "b) Simulations under CAUSE model.", y = "FPR, A to B")
+
+g4 <- cause_results_summary %>% 
+  filter(method %in% show_methods) %>% 
+  ggplot() + 
+  # geom_line(aes(x=q, y=stat_ab, color=method)) + 
+  geom_line(aes(x=q, y=stat_ba, color=method)) +
+  geom_errorbar(aes(ymin = stat_ba - 1.96*se_stat_ba, ymax = stat_ba + 1.96*se_stat_ba, x = q), width = 0.015) +
+  facet_wrap(vars(name), nrow=1) +
+  scale_color_brewer(labels = c("CAUSE", "Egger", "Steiger", "WWER", "IVW", "MR Mix", "MR PRESSO"), palette = "Dark2") +
+  ylim(0, 1) + 
+  labs(x = "Proportion of shared variants", y = "FPR, B to A") + guides(color = FALSE)
+
+g5 <- polyg_all_summary %>%  filter(grepl("PolyG: high A, high B", name), nu == sqrt(0.3), eta == sqrt(0.3), Nb == 100000) %>%
+  filter(method %in% show_methods) %>% 
+  ggplot() + facet_wrap(vars(name), nrow=1) +
+  geom_col(aes(x=method, y=stat_ab, fill=method), position = "dodge") + 
+  geom_errorbar(aes(ymin = stat_ab - 1.96*se_stat_ab, ymax = stat_ab + 1.96*se_stat_ab, x=method), width = 0.15) +
+  scale_fill_brewer(labels = c("CAUSE", "Egger", "Steiger", "WWER", "IVW", "MR Mix", "MR PRESSO"), palette = "Dark2") +
+  ylim(0, 1) +
+  theme(axis.text.x=element_blank(), axis.ticks.x=element_blank()) +
+  labs(x = NULL, title = "c) Simulations modeling polygenicity of U.", y = "FPR, A to B") + guides(fill = FALSE)
+
+g6 <- polyg_all_summary %>%  filter(grepl("PolyG: high A, high B", name), nu == sqrt(0.3), eta == sqrt(0.3), Nb == 100000) %>%
+  filter(method %in% show_methods) %>% 
+  ggplot() + facet_wrap(vars(name), nrow=1) +
+  geom_col(aes(x = method, y=stat_ba, fill=method), position = "dodge") + 
+  geom_errorbar(aes(ymin = stat_ba - 1.96*se_stat_ba, ymax = stat_ba + 1.96*se_stat_ba, x = method), width = 0.15) +
+  scale_fill_brewer(labels = c("CAUSE", "Egger", "Steiger", "WWER", "IVW", "MR Mix", "MR PRESSO"), palette = "Dark2") +
+  ylim(0, 1) + 
+  theme(axis.text.x=element_blank(), axis.ticks.x=element_blank()) +
+  labs(x = "Method", y = "FPR, B to A") + guides(fill = FALSE)
+
+
+ggarrange(g1, g2, g3, g4, g5, g6, nrow=6)
+```
+
+
+
+```{r, fig.width=8}
+show_methods = c("egger_5e-8", "egger_wa_5e-8", "egger_wf_5e-8", "egger_s_5e-8", "cause_1e-3", "ivw_5e-8", "mr_mix_5e-8", "mr_presso_5e-8")
+# show_methods = c("egger_5e-8", "egger_wa_5e-8", "egger_wf_5e-8", "egger_s_5e-8")
+
+polyg_all_summary %>% 
+  filter(nu == sqrt(0.3), eta == sqrt(0.3)) %>%
+  filter(method %in% show_methods) %>% 
+  ggplot() + 
+  # geom_line(aes(x=q, y=stat_ab, color=method)) + 
+  geom_col(aes(x=method, y=stat_ab, color=method)) +
+  ylim(0, 1) +
+  facet_wrap(vars(name), nrow=6)
+
+polyg_all_summary %>% 
+  filter(nu == sqrt(0.3), eta == sqrt(0.3)) %>%
+  filter(method %in% show_methods) %>% 
+  ggplot() + 
+  # geom_line(aes(x=q, y=stat_ab, color=method)) + 
+  geom_col(aes(x=method, y=stat_ba, color=method)) +
+  ylim(0, 1) +
+  facet_wrap(vars(name), nrow=6)
+
+polyg_all_summary %>% 
+  filter(nu == sqrt(0.1), eta == sqrt(0.3)) %>%
+  filter(method %in% show_methods) %>% 
+  ggplot() + 
+  # geom_line(aes(x=q, y=stat_ab, color=method)) + 
+  geom_col(aes(x=method, y=stat_ab, color=method)) +
+  ylim(0, 1) +
+  facet_wrap(vars(name), nrow=6)
+
+polyg_all_summary %>% 
+  filter(nu == sqrt(0.1), eta == sqrt(0.3)) %>%
+  filter(method %in% show_methods) %>% 
+  ggplot() + 
+  # geom_line(aes(x=q, y=stat_ab, color=method)) + 
+  geom_col(aes(x=method, y=stat_ba, color=method)) +
+  ylim(0, 1) +
+  facet_wrap(vars(name), nrow=6)
+
+polyg_all_summary %>% 
+  filter(nu == sqrt(0.3), eta == sqrt(0.1)) %>%
+  filter(method %in% show_methods) %>% 
+  ggplot() + 
+  # geom_line(aes(x=q, y=stat_ab, color=method)) + 
+  geom_col(aes(x=method, y=stat_ab, color=method)) +
+  ylim(0, 1) +
+  facet_wrap(vars(name), nrow=3)
+
+polyg_all_summary %>% 
+  filter(nu == sqrt(0.3), eta == sqrt(0.1)) %>%
+  filter(method %in% show_methods) %>% 
+  ggplot() + 
+  # geom_line(aes(x=q, y=stat_ab, color=method)) + 
+  geom_col(aes(x=method, y=stat_ba, color=method)) +
+  ylim(0, 1) +
+  facet_wrap(vars(name), nrow=3)
+```
+
+
+## Code to generate panels in Figure 1.
+```{r, fig.width=8, fig.height=8}
+af_ref_file <- "/gpfs/commons/projects/UKBB/sumstats/ldsc_results/eur_w_ld_chr/19.l2.ldscore.gz"
+theme_set(theme_classic())
+
+fig_ds_null <- generate_sumstats_glcm(
+  Na = 50000, Nb = 50000, M = 25000, ha = 0.3, hb = 0.3, hu = 0.3, 
+  nu = sqrt(0.3), eta = sqrt(0.3), gamma = 0, delta = 0,
+  p = 0.1, q = 0.33, r = 0.33, s=0.33, af_ref_file = af_ref_file)
+
+fig_ds_alt <- generate_sumstats_glcm(
+  Na = 50000, Nb = 50000, M = 25000, ha = 0.3, hb = 0.3, hu = 0.3, 
+  nu = 0, eta = 0, gamma = sqrt(0.1), delta = 0,
+  p = 0.1, q = 0.2, r = 0.4, s=0.4, af_ref_file = af_ref_file)
+
+sumstats1 <- fig_ds_null$sumstats_1
+sumstats2 <- fig_ds_null$sumstats_2
+
+plot_data_1 <- tibble(
+  "beta_A" = sumstats1$beta$A, "beta_B" = sumstats1$beta$B,
+  "beta_hat_A" = sumstats1$beta_hat$A, "beta_hat_B" = sumstats1$beta_hat$B,
+  "se_hat_A" = sumstats1$se_hat$A, "se_hat_B" = sumstats1$se_hat$B,
+  "ZA" = fig_ds_null$Z$A, "ZB" = fig_ds_null$Z$B, "ZU" = fig_ds_null$Z$U) %>%
+  mutate(Z_tot = ZU + ZA + ZB, sig_A = abs(beta_hat_A/se_hat_A) > 5.45, sig_B = abs(beta_hat_B/se_hat_B) > 5.45) %>%
+  filter(Z_tot > 0) %>%
+  mutate(label = if_else(ZU==1, "U", if_else(ZA==1 & ZB==1, "A, B", if_else(ZA==1, "A", "B")))) %>%
+  mutate(welch_stat = bimmer:::welch_test(beta_hat_B, se_hat_B, beta_hat_A, se_hat_A)$t)
+  # mutate(label = if_else(ZU==1, "U", if_else(ZA==1 & ZB==1, "A", "E")))
+
+
+g1 <- plot_data_1 %>% ggplot(aes(beta_A, beta_B, color = label)) + geom_point() +
+  labs(x = NULL, y = NULL, title = "Null, true effects") + guides(color=F)
+g2 <- plot_data_1 %>% ggplot(aes(beta_hat_A, beta_hat_B, color = welch_stat)) + geom_point() +
+  scale_color_gradient2() + guides(color=F) + labs(x = NULL, y = NULL, title = "Null, estimates in first dataset")
+
+plot_data_2 <- tibble(
+  "beta_hat_A" = sumstats2$beta_hat$A, "beta_hat_B" = sumstats2$beta_hat$B,
+  "se_hat_A" = sumstats2$se_hat$A, "se_hat_B" = sumstats2$se_hat$B,
+  "ZA" = fig_ds_null$Z$A, "ZB" = fig_ds_null$Z$B, "ZU" = fig_ds_null$Z$U) %>%
+  mutate(Z_tot = ZU + ZA + ZB) %>% filter(Z_tot > 0) %>% 
+  mutate(welch_stat = plot_data_1$welch_stat, weight = as.numeric(plot_data_1$sig_A), cat = "Egger")
+
+plot_data_2_w <- plot_data_2 %>% mutate(weight = if_else((plot_data_1$welch_stat > 2)&(weight > 0), plot_data_1$welch_stat, 0), cat = "WWER")
+plot_data_2 <- rbind(plot_data_2, plot_data_2_w)
+
+g3 <- plot_data_2 %>% ggplot(aes(beta_hat_A, beta_hat_B)) +
+  geom_point(aes(fill =  welch_stat), shape=21, stroke=0, size=2) + scale_fill_gradient2() +
+  geom_smooth(formula = y ~ x, method = lm, aes(weight=weight, color=cat)) +
+  labs(x = NULL, y = NULL, title ="Null, estimates in second dataset") + guides(fill=F, color=F)
+
+
+sumstats1 <- fig_ds_alt$sumstats_1
+sumstats2 <- fig_ds_alt$sumstats_2
+
+
+plot_data_1 <- tibble(
+  "beta_A" = sumstats1$beta$A, "beta_B" = sumstats1$beta$B,
+  "beta_hat_A" = sumstats1$beta_hat$A, "beta_hat_B" = sumstats1$beta_hat$B,
+  "se_hat_A" = sumstats1$se_hat$A, "se_hat_B" = sumstats1$se_hat$B,
+  "ZA" = fig_ds_alt$Z$A, "ZB" = fig_ds_alt$Z$B, "ZU" = fig_ds_alt$Z$U) %>%
+  mutate(Z_tot = ZU + ZA + ZB, sig_A = abs(beta_hat_A/se_hat_A) > 5.45, sig_B = abs(beta_hat_B/se_hat_B) > 5.45) %>%
+  filter(Z_tot > 0) %>%
+  mutate(label = if_else(ZU==1, "U", if_else(ZA==1 & ZB==1, "A, B", if_else(ZA==1, "A", "B")))) %>%
+  mutate(welch_stat = bimmer:::welch_test(beta_hat_B, se_hat_B, beta_hat_A, se_hat_A)$t)
+
+g4 <- plot_data_1 %>% ggplot(aes(beta_A, beta_B, color = label)) + geom_point() +
+  labs(x = NULL, y = NULL, color = "SNP effect", title = "Alt, true effects")
+g5 <- plot_data_1 %>% ggplot(aes(beta_hat_A, beta_hat_B, color = welch_stat)) + geom_point() +
+  scale_color_gradient2(name = "Welch statistic") + labs(x = NULL, y = NULL, title = "Alt, estimates in first dataset")
+
+
+
+plot_data_2 <- tibble(
+  "beta_hat_A" = sumstats2$beta_hat$A, "beta_hat_B" = sumstats2$beta_hat$B,
+  "se_hat_A" = sumstats2$se_hat$A, "se_hat_B" = sumstats2$se_hat$B,
+  "ZA" = fig_ds_alt$Z$A, "ZB" = fig_ds_alt$Z$B, "ZU" = fig_ds_alt$Z$U) %>%
+  mutate(Z_tot = ZU + ZA + ZB) %>% filter(Z_tot > 0) %>% 
+  mutate(welch_stat = plot_data_1$welch_stat, weight = as.numeric(plot_data_1$sig_A), cat = "Egger")
+
+plot_data_2_w <- plot_data_2 %>% mutate(weight = if_else((plot_data_1$welch_stat > 2)&(weight > 0), plot_data_1$welch_stat, 0), cat = "WWER")
+plot_data_2 <- rbind(plot_data_2, plot_data_2_w)
+
+g6 <- plot_data_2 %>% ggplot(aes(beta_hat_A, beta_hat_B)) +
+  geom_point(aes(fill =  welch_stat), shape=21, stroke=0, size=2) + scale_fill_gradient2() +
+  geom_smooth(formula = y ~ x, method = lm, aes(weight=weight, color=cat)) +
+  labs(x = NULL, y = NULL, color = "Method", title = "Alt, estimates in second dataset") + guides(fill=F)
+
+ggarrange(g1, g4, g2, g5, g3, g6, ncol= 2, left = "Beta B", bottom = "Beta A")
+```

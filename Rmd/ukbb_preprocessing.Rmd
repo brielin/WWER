@@ -1,0 +1,317 @@
+# Load Packages
+```{r}
+# install.packages("/gpfs/commons/home/bbrown/ukbb_network/inspre", repos = NULL, type = "source")
+require(inspre)
+require(tidyverse)
+require(foreach)
+require(igraph)
+require(devtools)
+require(egg)
+require(GGally)
+devtools::load_all()
+```
+
+
+# Trying to add data preprocessing to R
+```{r}
+# Download raw sumstats files.
+# TODO(brielin): remove local paths and setup working dir from scratch?
+n_cores = 8
+ukbb_ldsc_results_file <- "/gpfs/commons/projects/UKBB/sumstats/ukb31063_h2_topline.02Oct2019.tsv.gz"
+ukbb_ldsc_manifest_file <- "/gpfs/commons/projects/UKBB/sumstats/ukb31063_ldsc_sumstat_manifest.tsv.gz"
+save_dir <- "/gpfs/commons/projects/UKBB/sumstats/ldsc_raw"
+
+# SLE: rare in ukbb, not sure if theres two easy GWAS to pull
+# RA: common enough to make exception and/or to use Okada as discovery 20002_1464
+# psoriasis: common enough for exception 20002_1453
+# crohns: heritable enough for exception 20002_1462
+# T1D: Not sure if UKBB diabetes is this? check RG with below
+# T2d: could make exception 20002_1223
+exceptions <- c(
+  "20002_1464", # RA
+  "20002_1453", # psoriasis
+  "20002_1462", # crohns
+  "20002_1223" # T2D
+)
+
+ukbb_ldsc_results <- readr::read_tsv(gzfile(ukbb_ldsc_results_file))
+ukbb_ldsc_manifest <- readr::read_tsv(gzfile(ukbb_ldsc_manifest_file))
+
+ukbb_ldsc_results <- ukbb_ldsc_results %>% filter((h2_z > 4 & isNotPrimary == F & Neff > 4500 & isBadOrdinal == F)|(phenotype %in% exceptions))
+
+ukbb_info <- dplyr::left_join(ukbb_ldsc_results, ukbb_ldsc_manifest, by = c("phenotype", "description")) %>% 
+  filter(has_v2_replacement == F, !grepl("dilution_factor", ldsc_sumstat_file)) %>%
+  group_by(description) %>% mutate(count = n()) %>% ungroup() %>% filter(count == 3) %>%
+  mutate(dest_file = paste0(save_dir, "/", phenotype, ".", sex.y, ".tsv.bgz"))
+
+# future::plan("multisession", workers = n_cores)
+# furrr::future_walk2(ukbb_info$ldsc_sumstat_dropbox, ukbb_info$dest_file, ~ if(!file.exists(.y)) download.file(.x, .y, method = "wget"))  
+```
+
+
+```{r}
+# Calculate M-F rg to filter on M-F phenotype mismatches.
+n_cores = 8
+ref_ld_chr = "/gpfs/commons/projects/UKBB/sumstats/ldsc_results/eur_w_ld_chr/"
+w_ld_chr = "/gpfs/commons/projects/UKBB/sumstats/ldsc_results/eur_w_ld_chr/"
+ldsc_mf_result_dir = "/gpfs/commons/projects/UKBB/sumstats/ldsc_results/male_female_rg/"
+
+rg_info <- ukbb_info %>% dplyr::select(phenotype, description, sex.y, dest_file, Neff) %>%
+  tidyr::pivot_wider(names_from = sex.y, values_from = dest_file) %>%
+  dplyr::mutate(ldsr_result_file = paste0(ldsc_mf_result_dir, phenotype, ".mfrg"))
+
+# future::plan("multisession", workers = n_cores)
+# rg_info %>% dplyr::select(female, male, ldsr_result_file) %>% 
+#   furrr::future_pwalk(function(female, male, ldsr_result_file){
+#     if(!file.exists(paste0(ldsr_result_file, ".log"))){
+#       system(paste0("ldsc.py --rg ", female, ",", male, " --ref-ld-chr ", ref_ld_chr,
+#                     " --w-ld-chr ", w_ld_chr, " --out ", ldsr_result_file))
+#     }
+#   })
+
+rg_values <- purrr::map_df(rg_info$ldsr_result_file, function(.f){
+     lines <- read_lines(paste0(.f, ".log"))
+     result <- strsplit(lines[length(lines) - 3], "\\s+")[[1]]
+     return(list("rg" = as.double(result[3]), "se" = as.double(result[4])))
+})
+
+rg_info <- rg_info %>% dplyr::mutate(mf_rg = rg_values$rg, mf_rg_se = rg_values$se, ci = mf_rg + 2*mf_rg_se, z0 = mf_rg/mf_rg_se, z1 = (1-mf_rg)/mf_rg_se)
+
+rg_info %>% ggplot() + geom_histogram(aes(x=mf_rg)) + xlim(0, 1)
+rg_info %>% ggplot() + geom_histogram(aes(x=ci)) + xlim(0, 1)
+
+rg_cutoff = 0.5
+z0_cutoff = 2
+
+selected_phenos <- rg_info %>% filter(mf_rg > rg_cutoff, z0 > z0_cutoff)
+```
+
+
+```{r}
+# Calculate genetic correlation to filter near-identical phenotypes.
+ref_ld_chr = "/gpfs/commons/projects/UKBB/sumstats/ldsc_results/eur_w_ld_chr/"
+w_ld_chr = "/gpfs/commons/projects/UKBB/sumstats/ldsc_results/eur_w_ld_chr/"
+ldsc_selected_result_dir = "/gpfs/commons/projects/UKBB/sumstats/ldsc_results/selected_rg/"
+
+selected_phenos <- selected_phenos %>% dplyr::mutate(ldsr_selected_file = paste0(ldsc_selected_result_dir, phenotype, ".rg"))
+
+all_phenos = do.call(function(...){paste(..., sep = ",")}, as.list(selected_phenos$both_sexes))
+
+# future::plan("multisession", workers = n_cores)
+# furrr::future_pwalk(head(selected_phenos), ~ system(paste0("ldsc.py --rg ", ..3, ",", all_phenos, " --ref-ld-chr ", ref_ld_chr, " --w-ld-chr ", w_ld_chr, " --out ", ..12)))
+
+run_and_parse_ldsc_rg <- function(pheno1_file, pheno2_files, ref_ld_chr_dir, w_ld_chr_dir, out_file){
+  if(!file.exists(paste0(out_file, ".log"))){
+    system(paste0("ldsc.py --rg ", pheno1_file, ",", pheno2_files, " --ref-ld-chr ", ref_ld_chr_dir, " --w-ld-chr ", w_ld_chr_dir, " --out ", out_file))
+  }
+  n_lines <- length(read_lines(paste0(out_file, ".log")))
+  n_phenos <- length(strsplit(pheno2_files, ",")[[1]])
+  result_table <- readr::read_delim(paste0(out_file, ".log"), skip = n_lines - n_phenos - 4, delim = " ", trim_ws = T, n_max = n_phenos)
+  return(result_table)
+}
+
+ldsc_settings <- tibble(
+  pheno1_file = selected_phenos$both_sexes,
+  pheno2_files = all_phenos,
+  ref_ld_chr_dir = ref_ld_chr,
+  w_ld_chr_dir = w_ld_chr,
+  out_file = selected_phenos$ldsr_selected_file)
+```
+
+
+```{r}
+sjob_run_ldsc <- rslurm::slurm_apply(
+  run_and_parse_ldsc_rg, ldsc_settings, jobname = "ldsc", nodes = nrow(ldsc_settings),
+  cpus_per_node = 1, slurm_options = list(time = "12:00:00", mem = "8G"), submit = T)
+```
+
+
+```{r}
+# IMIDs to check: SLE, RA, psoriasis, allergy, asthma, CB, CrD, CeD, IBD, MS, T1D, T2D, UC
+# SLE: rare in ukbb, not sure if theres two easy GWAS to pull
+# RA: common enough to make exception and/or to use Okada as discovery 20002_1464 mfrg na
+# psoriasis: common enough for exception 20002_1453 good
+# allergy: included 6152_9 good
+# DVT: included 6152_5 mfrg < 0.5
+# asthma included 6152_8 good actualy 20002_1111
+# chronic bronch: included 6152_6 good
+# crohns: heritable enough for exception 20002_1462 good
+# celiac: should be included 20002_1456 mfrg z0 < 2
+# IBD: potential not heritable in UKBB
+# MS: too hard
+# T1D: Not sure if UKBB diabetes is this? check RG with below
+# T2d: could make exception 20002_1223 mfrg fail
+# UC: should be in or make exception K51 good
+
+rg_max = 0.9
+sjob_run_ldsc <- rslurm::slurm_job(jobname = "ldsc", nodes = nrow(ldsc_settings))
+rg_results <- rslurm::get_slurm_out(sjob_run_ldsc, outtype = "table")
+
+rg_results <- rg_results %>% 
+  dplyr::left_join(selected_phenos, by = c("p1" = "both_sexes")) %>% 
+  dplyr::left_join(selected_phenos, by = c("p2" = "both_sexes"), suffix = c(".1", ".2")) %>% 
+  select(phenotype.1, phenotype.2, description.1, description.2, rg, se, z, p, mf_rg.1, mf_rg_se.1, mf_rg.2, mf_rg_se.2, Neff.1, Neff.2)
+```
+
+
+```{r}
+# Looking at rg_results at this stage, there are many "none of the above"
+# phenotypes that are highly genetically anti-correlated with important disease
+# phenotypes, but have larger sample sizes. We manually filter these to avoid
+# removing important disease phenotypes instead of "non"-phenotypes.
+filter_phenotypes = c(
+  "20107_100",	# Illnesses of father: None of the above (group 1)
+  "20107_101",	# Illnesses of father: None of the above (group 2)
+  "20110_100",  #	Illnesses of mother: None of the above (group 1)
+  "20111_100",  #	Illnesses of siblings: None of the above (group 1)
+  "6138_100",	# Qualifications: None of the above
+  "6145_100",	# Illness, injury, bereavement, stress in last 2 years: None of the above
+  "6146_100",	# Attendance/disability/mobility allowance: None of the above
+  # "6149_100", #	Mouth/teeth dental problems: None of the above
+  "6150_100", #	Vascular/heart problems diagnosed by doctor: None of the above
+  "6152_100",	# Blood clot, DVT, bronchitis, emphysema, asthma, rhinitis, eczema, allergy diagnosed by doctor: None of the above
+  "6154_100",	# Medication for pain relief, constipation, heartburn: None of the above
+  "6155_100",	# Vitamin and mineral supplements: None of the above
+  "6157_100",	# Why stopped smoking: None of the above
+  "6159_100",	# Pain type(s) experienced in last month: None of the above
+  "6160_100",	# Leisure/social activities: None of the above
+  "6164_100",	# Types of physical activity in last 4 weeks: None of the above
+  "6179_100"	# Mineral and other dietary supplements: None of the above
+)
+
+
+pheno_by_neff <- (selected_phenos %>% dplyr::filter(!(phenotype %in% filter_phenotypes)) %>% dplyr::arrange(Neff, mf_rg))$phenotype
+ 
+for(i in 1:length(pheno_by_neff)) {
+  pheno = pheno_by_neff[i]
+  remaining_phenos <- pheno_by_neff[i:length(pheno_by_neff)]
+  # print(filter(rg_results, phenotype.1 == pheno, phenotype.2 != pheno, !(phenotype.2 %in% filter_phenotypes), phenotype.2 %in% remaining_phenos, abs(rg) > 0.9))
+  n_high_cor <- nrow(filter(rg_results, phenotype.1 == pheno, phenotype.2 != pheno, !(phenotype.2 %in% filter_phenotypes), phenotype.2 %in% remaining_phenos, abs(rg) > 0.9))
+  if(n_high_cor > 0) filter_phenotypes <- c(filter_phenotypes, pheno)
+  # print(length(filter_phenotypes))
+}
+
+selected_phenos<- filter(selected_phenos, !(phenotype %in% filter_phenotypes))
+rg_result <- filter(rg_results, !(phenotype.1 %in% filter_phenotypes), !(phenotype.2 %in% filter_phenotypes))
+
+save(selected_phenos, file = "/gpfs/commons/home/bbrown/ukbb_network/saved_rdata/selected_phenotypes.Rdata")
+save(rg_results, file = "/gpfs/commons/home/bbrown/ukbb_network/saved_rdata/rg_results.Rdata")
+```
+
+
+```{r}
+# TODO(brielin): The LDSC files are HM3 only. Need to download the GWAS
+# files and clump/filter those instead.
+ukbb_full_loc = "/nfs/scratch/bbrown/ukbb_full_raw/"
+# ukbb_full_files <- ukbb_info %>% filter(phenotype %in% selected_phenos$phenotype, sex.y %in% c("male", "female")) %>% select(phenotype, sex.y, gwas_dropbox) %>% mutate(ukbb_full_file = paste0(ukbb_full_loc, phenotype, ".", sex.y, ".tsv.bgz"))
+ukbb_full_files <- ukbb_info %>% filter(phenotype %in% selected_phenos$phenotype, sex.y %in% c("male", "female")) %>% select(phenotype, sex.y, gwas_dropbox) %>% mutate(old = paste0(ukbb_full_loc, phenotype, ".", sex.y), ukbb_full_file = paste0(ukbb_full_loc, phenotype, ".", sex.y, ".tsv.bgz"))
+
+
+future::plan("multisession", workers = n_cores)
+# furrr::future_walk2(ukbb_full_files$gwas_dropbox, ukbb_full_files$ukbb_full_file, ~ if(!file.exists(.y)) download.file(.x, .y, method = "wget"))
+furrr::future_walk2(ukbb_full_files$old, ukbb_full_files$ukbb_full_file, ~ system(paste0("mv ", .x, " ", .y)))
+```
+
+
+```{r}
+# Now we need to clump sumstats using plink on slurm.
+#
+# This needs a dups list not to file. Run this on your reference bed and
+# point dups to the output.
+# 
+# for i in $(seq 1 22); do
+#   cut -f 2 "${REFERENCE_BED}${i}.bim" | sort | uniq -d > "ukbb_dups_chr${i}.txt"
+# done
+load("/gpfs/commons/home/bbrown/ukbb_network/saved_rdata/selected_phenotypes.Rdata")
+p_thresh = 1e-4
+reference_bed = "/nfs/scratch/bbrown/ukbb_ref/ukb_imp_cleaned_rel_hwe_chr"
+dups = "/nfs/scratch/bbrown/ukbb_ref/ukbb_dups_chr"
+out_dir = "/nfs/scratch/bbrown/clumped/"
+gwas_dir = "/nfs/scratch/bbrown/ukbb_full_raw/"
+ldsc_dir = "/nfs/scratch/bbrown/ldsc_raw/"
+variants_file = "/nfs/scratch/bbrown/variants.tsv.bgz"
+
+split_and_clump <- function(out_dir, chr, gwas_file, ldsc_file, variants_file, reference_bed, dups, p_thresh){
+  if(!dir.exists(out_dir)) system(paste0("mkdir -p ", out_dir))
+  bim_file <- paste0(reference_bed, chr, ".bim")
+  bim_data <- readr::read_tsv(bim_file, col_names = c("chr", "rsid", "cm", "pos", "A1", "A2"))
+  fv <- function(x, pos) subset(x, rsid %in% bim_data$rsid)
+  variant_data <- readr::read_tsv_chunked(gzfile(variants_file), DataFrameCallback$new(fv)) %>%
+    dplyr::select(variant, chr, pos, ref, alt, rsid, AF, minor_allele, minor_AF)
+  fs <- function(x, pos) subset(x, variant %in% variant_data$variant)
+  gwas_data <- readr::read_tsv_chunked(gzfile(gwas_file), DataFrameCallback$new(fs)) %>%
+    dplyr::select(variant, minor_allele, minor_AF, n_complete_samples, beta, se, tstat, pval)
+  fl <- function(x, pos) subset(x, SNP %in% variant_data$rsid)
+  ldsc_data <- readr::read_tsv_chunked(gzfile(ldsc_file), DataFrameCallback$new(fl)) 
+    
+
+  sumstats <- variant_data %>% left_join(gwas_data, by = c("variant")) %>%
+    select(rsid, chr, pos, ref, alt, AF, n_complete_samples, beta, se, tstat, pval)
+  dup_snps <- unique(sumstats$rsid[duplicated(sumstats$rsid)])
+  sumstats <- dplyr::filter(sumstats, !(rsid %in% dup_snps)) %>% dplyr::arrange(chr, pos)
+  ldsc_data <- dplyr::filter(ldsc_data, SNP %in% sumstats$rsid) %>% arrange(SNP)
+  ss_ldsc <- dplyr::filter(sumstats, rsid %in% ldsc_data$SNP) %>% arrange(rsid)
+  
+  num_mismatch <- sum(sign(ldsc_data$Z) != sign(ss_ldsc$tstat))
+  if(num_mismatch == nrow(ss_ldsc)){
+    sumstats <- dplyr::mutate(sumstats, beta=-beta, tstat=-tstat)
+  } else if(num_mismatch > 0){
+    stop("Error: mismatches between LDSC and SS data.")
+  }
+  
+  chr_chunk_file <- paste0(out_dir, "chr", chr, ".tsv")
+  print(chr_chunk_file)
+  readr::write_tsv(sumstats, chr_chunk_file)
+  plink_command <- paste0(
+    "plink --bfile ", reference_bed, chr,
+    " --thin-indiv-count 100000 ",
+    " --clump ", chr_chunk_file,
+    " --clump-snp-field rsid",
+    " --clump-r2 0.05 --clump-kb 500 --clump-field \"pval\" --clump-p1 ", p_thresh,
+    " --exclude ", dups, chr, ".txt", " --out ", out_dir, "chr", chr)
+  system(plink_command)
+  clumpfile <- paste0(out_dir, "chr", chr, ".clumped")
+  snpfile <- paste0(out_dir, "chr", chr, ".snps")
+  if(file.exists(clumpfile)) system(paste0("tail -n +2 ", clumpfile, " | awk '{print $3}' > ", snpfile))
+}
+
+clump_settings <- tibble(
+  out_dir = rep(paste0(out_dir, selected_phenos$phenotype, ".male/"), each = 22),
+  chr = rep(c(1:22), times = length(selected_phenos$phenotype)),
+  gwas_file = rep(paste0(gwas_dir, selected_phenos$phenotype, ".male.tsv.bgz"), each = 22),
+  ldsc_file = rep(paste0(ldsc_dir, selected_phenos$phenotype, ".male.tsv.bgz"), each = 22),
+  variants_file = variants_file,
+  reference_bed = reference_bed,
+  dups = dups,
+  p_thresh = p_thresh
+)
+
+sjob_run_clump <- rslurm::slurm_apply(
+   split_and_clump, clump_settings, jobname = "clump", nodes = ceiling(nrow(clump_settings)/2),
+   cpus_per_node = 2, slurm_options = list(time = "12:00:00", mem = "32G", constraint = "v5"), submit = T)
+```
+
+
+```{r}
+# Filter summary statistics down to clump index SNPs in at least one phenotype.
+n_cores = 16
+all_snps = "/gpfs/commons/projects/UKBB/sumstats/snps_to_use.txt"
+filter_script = "ukbb_analysis/filter_ukbb_sumstats.bash"
+gwas_raw_dir = "/gpfs/commons/projects/UKBB/sumstats/ukbb_full_raw/"
+clump_dir = "/gpfs/commons/projects/UKBB/sumstats/clumped/"
+variants_file = "/gpfs/commons/projects/UKBB/sumstats/variants.tsv.bgz"
+
+load("/gpfs/commons/home/bbrown/ukbb_network/saved_rdata/selected_phenotypes.Rdata")
+# purrr::walk(selected_phenos$phenotype, ~ system(paste0("cat ", clump_dir, .x, ".male/chr*.snps | sort | uniq > ", clump_dir, .x, ".male/all.snps" )))
+# system(paste0("cat ", clump_dir, "*/*.snps | sort | uniq > ", all_snps))
+
+future::plan("multisession", workers = n_cores)
+furrr::future_walk(selected_phenos$phenotype, ~ system(paste0("bash ../", filter_script, " ", gwas_raw_dir, .x, ".male.tsv.bgz ", variants_file, " ", all_snps)))
+furrr::future_walk(selected_phenos$phenotype, ~ system(paste0("bash ../", filter_script, " ", gwas_raw_dir, .x, ".female.tsv.bgz ", variants_file, " ", all_snps)))
+```
+
+```{r}
+# Calculate TCEs
+# TODO(brielin): Actually use AFs to do inverse-variance weighting?
+
+```

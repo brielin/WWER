@@ -1,0 +1,423 @@
+```{r}
+library(tidyverse)
+library(foreach)
+library(doMC)
+library(scales)
+library(egg)
+library(MendelianRandomization)
+library(cause)
+library(MRMix)
+library(MRPRESSO)
+library(rslurm)
+library(WWER)
+```
+
+
+```{r}
+# Some helper functions to assist in simualting and generating plots.
+
+# Note that this closes over a globally defined n_cores variable.
+run_sim_niter <- function(name, n_iter, Na, Nb, M, ha, hb, hu, nu, eta, gamma, delta, p, q, r, s, af_ref_file = NULL){
+  doMC::registerDoMC(cores = n_cores)
+  print(c(n_cores, n_iter, Na, Nb, M, ha, hb, hu, nu, eta, gamma, delta, p, q, r, s))
+  res_tibble = foreach(iter = 1:n_iter, .combine = bind_rows) %dopar% {
+    run_sim(name, iter, Na, Nb, M, ha, hb, hu, nu, eta, gamma, delta, p, q, r, s, af_ref_file)
+  }
+  return(res_tibble)
+}
+
+
+se <- function(x, na.rm = FALSE){
+  sqrt(var(x, na.rm = na.rm)/length(x))
+}
+
+
+make_summary_tibble <- function(plot_tibble){
+  summary_tibble <- plot_tibble %>%
+    dplyr::group_by(name, method, mr_method, p_thresh, Na, Nb, M, ha, hb, hu, nu, eta, gamma, delta, q, r, s, Rab, Rba) %>% 
+    mutate(stat_ab = mean(pab < 0.05, na.rm=T), stat_ba = mean(pba < 0.05, na.rm=T),
+           se_stat_ab := se(pab < 0.05, na.rm=T), se_stat_ba := se(pba < 0.05, na.rm=T),
+           mae_ab = mean(abs(Rab - Rab_hat), na.rm=T), mae_ba = mean(abs(Rba - Rba_hat), na.rm=T),
+           se_mae_ab = se(abs(Rab - Rab_hat), na.rm=T), se_mae_ba = se(abs(Rba - Rba_hat), na.rm=T),
+           Rab_hat = mean(Rab_hat, na.rm=T), Rba_hat = mean(Rba_hat, na.rm=T),
+           Sab_hat = mean(Sab_hat, na.rm=T), Sba_hat = mean(Sba_hat, na.rm=T),
+           runtime = mean(runtime, na.rm=T), rg = mean(rg)) %>%
+    ungroup() %>%
+    distinct(name, method, mr_method, p_thresh, Na, Nb, M, ha, hb, hu, rg, nu, eta, gamma, delta, q, r, s, Rab, Rba,
+             stat_ab, stat_ba, se_stat_ab, se_stat_ba, mae_ab, mae_ba, se_mae_ab, se_mae_ba,
+             Rab_hat, Rba_hat, Sab_hat, Sba_hat, runtime)
+  return(summary_tibble)
+}
+
+
+reverselog_trans <- function(base = exp(1)) {
+  trans <- function(x) -log(x, base)
+  inv <- function(x) base^(-x)
+  trans_new(paste0("reverselog-", format(base)), trans, inv,
+            log_breaks(base = base), domain = c(1e-100, Inf))
+}
+```
+
+
+## Simulations under the one-way alt with no confounding effect.
+```{r}
+n_iter = 100
+af_ref_file <- "/gpfs/commons/projects/UKBB/sumstats/ldsc_results/eur_w_ld_chr/19.l2.ldscore.gz"
+
+h = 0.25
+M = 500000
+gamma_alt = c(rep(sqrt(0.01), 3), rep(sqrt(0.025), 3), rep(sqrt(0.05), 3), rep(sqrt(0.1), 3), rep(sqrt(0.2), 3))
+Na_alt = rep(c(100000, 25000, 100000), 5)
+Nb_alt = rep(c(100000, 100000, 25000), 5)
+M_l = 500
+M_h = 2000
+
+M_ll = 2*M_l
+p_ll = M_ll/M
+r_ll = M_l/M_ll
+s_ll = M_l/M_ll
+alt_ll <- tibble(
+  name = "PolyG: low A, low B.",
+  n_iter = n_iter, Na = Na_alt, Nb = Nb_alt, M = M,
+  ha = h, hb = h, hu = h, nu = 0, eta = 0, gamma = gamma_alt, delta = 0,
+  p = p_ll, q = 0, r = r_ll, s = s_ll, af_ref_file = af_ref_file
+)
+
+M_lh = M_l + M_h
+p_lh = M_lh/M
+r_lh = M_l/M_lh
+s_lh = M_h/M_lh
+alt_lh <- tibble(
+  name = "PolyG: low A, high B",
+  n_iter = n_iter, Na = Na_alt, Nb = Nb_alt, M = M,
+  ha = h, hb = h, hu = h, nu = 0, eta = 0, gamma = gamma_alt, delta = 0,
+  p = p_lh, q = 0, r = r_lh, s = s_lh, af_ref_file = af_ref_file
+)
+
+M_hl = M_l + M_h
+p_hl = M_hl/M
+r_hl = M_h/M_hl
+s_hl = M_l/M_hl
+alt_hl <- tibble(
+  name = "PolyG: high A, low B",
+  n_iter = n_iter, Na = Na_alt, Nb = Nb_alt, M = M,
+  ha = h, hb = h, hu = h, nu = 0, eta = 0, gamma = gamma_alt, delta = 0,
+  p = p_hl, q = 0, r = r_hl, s = s_hl, af_ref_file = af_ref_file
+)
+
+M_hh = 2*M_h
+p_hh = M_hh/M
+r_hh = M_h/M_hh
+s_hh = M_h/M_hh
+alt_hh <- tibble(
+  name = "PolyG: high A, high B",
+  n_iter = n_iter, Na = Na_alt, Nb = Nb_alt, M = M,
+  ha = h, hb = h, hu = h, nu = 0, eta = 0, gamma = gamma_alt, delta = 0,
+  p = p_hh, q = 0, r = r_hh, s = s_hh, af_ref_file = af_ref_file
+)
+
+sim_settings_alt_np <- dplyr::bind_rows(alt_ll, alt_lh, alt_hl, alt_hh)
+```
+
+```{r}
+n_cores = 8
+sjob_alt_np <- rslurm::slurm_apply(
+  run_sim_niter, sim_settings_alt_np, jobname = "bimr_alt_np", nodes = nrow(sim_settings_alt_np),
+  cpus_per_node = 1, slurm_options = list(time = "36:00:00", mem = "40G"),
+  add_objects = c("run_sim", "generate_sumstats_glcm_sdbeta", "generate_sumstats_glcm", "n_cores", "h2_to_s2"),
+  submit = F)
+```
+
+
+## Simulations under the one-way alt with a confounding effect.
+```{r}
+h = 0.25
+Na = 100000
+Nb = 100000
+nu_alt_wp = c(sqrt(0.05), sqrt(0.05), sqrt(0.2), sqrt(0.2))
+eta_alt_wp = c(sqrt(0.05), sqrt(0.2), sqrt(0.05), sqrt(0.2))
+gamma_alt_wp = sqrt(0.025)
+
+M_l = 500
+M_h = 2000
+
+M_new = 500000
+M_lll = 3*M_l
+p_lll = M_lll/M_new
+q_lll = M_l/M_lll
+r_lll = M_l/M_lll
+s_lll = M_l/M_lll
+alt_wp_lll <- tibble(
+  name = "PolyG: low A, low B, low U",
+  n_iter = n_iter, Na = Na, Nb = Nb, M = M,
+  ha = h, hb = h, hu = h, nu = nu_alt_wp, eta = eta_alt_wp, gamma = gamma_alt_wp, delta = 0,
+  p = p_lll, q = q_lll, r = r_lll, s = s_lll, af_ref_file = af_ref_file
+)
+
+M_hll = 1*M_h + 2*M_l
+p_hll = M_hll/M_new
+q_hll = M_h/M_hll
+r_hll = M_l/M_hll
+s_hll = M_l/M_hll
+alt_wp_hll <- tibble(
+  name = "PolyG: low A, low B, high U",
+  n_iter = n_iter, Na = Na, Nb = Nb, M = M,
+  ha = h, hb = h, hu = h, nu = nu_alt_wp, eta = eta_alt_wp, gamma = gamma_alt_wp, delta = 0,
+  p = p_hll, q = q_hll, r = r_hll, s = s_hll, af_ref_file = af_ref_file
+)
+
+M_hlh = 2*M_h + 1*M_l
+p_hlh = M_hlh/M_new
+q_hlh = M_h/M_hll
+r_hlh = M_l/M_hll
+s_hlh = M_h/M_hll
+alt_wp_hlh <- tibble(
+  name = "PolyG: high A, low B, high U",
+  n_iter = n_iter, Na = Na, Nb = Nb, M = M,
+  ha = h, hb = h, hu = h, nu = nu_alt_wp, eta = eta_alt_wp, gamma = gamma_alt_wp, delta = 0,
+  p = p_hlh, q = q_hlh, r = r_hlh, s = s_hlh, af_ref_file = af_ref_file
+)
+
+M_llh = 1*M_h + 2*M_l
+p_llh = M_llh/M_new
+q_llh = M_l/M_llh
+r_llh = M_l/M_llh
+s_llh = M_h/M_llh
+alt_wp_llh <- tibble(
+  name = "PolyG: low A, high B, low U",
+  n_iter = n_iter, Na = Na, Nb = Nb, M = M,
+  ha = h, hb = h, hu = h, nu = nu_alt_wp, eta = eta_alt_wp, gamma = gamma_alt_wp, delta = 0,
+  p = p_llh, q = q_llh, r = r_llh, s = s_llh, af_ref_file = af_ref_file
+)
+
+M_lhh = 2*M_h + 1*M_l
+p_lhh = M_lhh/M_new
+q_lhh = M_l/M_lhh
+r_lhh = M_h/M_lhh
+s_lhh = M_h/M_lhh
+alt_wp_lhh <- tibble(
+  name = "PolyG: high A, high B, low U",
+  n_iter = n_iter, Na = Na, Nb = Nb, M = M,
+  ha = h, hb = h, hu = h, nu = nu_alt_wp, eta = eta_alt_wp, gamma = gamma_alt_wp, delta = 0,
+  p = p_lhh, q = q_lhh, r = r_lhh, s = s_lhh, af_ref_file = af_ref_file
+)
+
+M_hhh = 3*M_h
+p_hhh = M_hhh/M_new
+q_hhh = M_h/M_hhh
+r_hhh = M_h/M_hhh
+s_hhh = M_h/M_hhh
+alt_wp_hhh <- tibble(
+  name = "PolyG: high A, high B, high U",
+  n_iter = n_iter, Na = Na, Nb = Nb, M = M,
+  ha = h, hb = h, hu = h, nu = nu_alt_wp, eta = eta_alt_wp, gamma = gamma_alt_wp, delta = 0,
+  p = p_hhh, q = q_hhh, r = r_hhh, s = s_hhh, af_ref_file = af_ref_file
+)
+
+sim_settings_alt_wp <- dplyr::bind_rows(alt_wp_lll, alt_wp_hll, alt_wp_hlh, alt_wp_llh, alt_wp_lhh, alt_wp_hhh)
+```
+
+```{r}
+n_cores = 8
+sjob_alt_wp <- rslurm::slurm_apply(
+  run_sim_niter, sim_settings_alt_wp, jobname = "bimr_alt_wp", nodes = nrow(sim_settings_alt_wp),
+  cpus_per_node = 1, slurm_options = list(time = "36:00:00", mem = "40G"),
+  add_objects = c("run_sim", "generate_sumstats_glcm_sdbeta", "generate_sumstats_glcm", "n_cores", "h2_to_s2"),
+  submit = F)
+```
+
+## Simulations under the bi-directional alt.
+```{r}
+n_iter = 100
+af_ref_file <- "/gpfs/commons/projects/UKBB/sumstats/ldsc_results/eur_w_ld_chr/19.l2.ldscore.gz"
+
+h = 0.25
+M = 500000
+gamma_alt = c(rep(-sqrt(0.1), 6), rep(-sqrt(0.03), 6), rep(-sqrt(0.01), 6), rep(sqrt(0.01), 6), rep(sqrt(0.03), 6), rep(sqrt(0.1), 6))
+delta_alt = rep(c(-sqrt(0.1), -sqrt(0.03), -sqrt(0.01), sqrt(0.01), sqrt(0.03), sqrt(0.1)), 6)
+M_l = 500
+M_h = 2000
+
+M_hh = 2*M_h
+p_hh = M_hh/M
+r_hh = M_h/M_hh
+s_hh = M_h/M_hh
+bialt_hh_eq <- tibble(
+  name = "PolyG: high A, high B; Na = Nb",
+  n_iter = n_iter, Na = 100000, Nb = 100000, M = M,
+  ha = h, hb = h, hu = h, nu = 0, eta = 0, gamma = gamma_alt, delta = delta_alt,
+  p = p_hh, q = 0, r = r_hh, s = s_hh, af_ref_file = af_ref_file
+)
+
+M_hh = 2*M_h
+p_hh = M_hh/M
+r_hh = M_h/M_hh
+s_hh = M_h/M_hh
+bialt_hh_agb <- tibble(
+  name = "PolyG: high A, high B; Na > Nb",
+  n_iter = n_iter, Na = 100000, Nb = 25000, M = M,
+  ha = h, hb = h, hu = h, nu = 0, eta = 0, gamma = gamma_alt, delta = delta_alt,
+  p = p_hh, q = 0, r = r_hh, s = s_hh, af_ref_file = af_ref_file
+)
+
+M_hl = M_l + M_h
+p_hl = M_hl/M
+r_hl = M_h/M_hl
+s_hl = M_l/M_hl
+bialt_hl_eq <- tibble(
+  name = "PolyG: high A, low B; Na = Nb",
+  n_iter = n_iter, Na = 100000, Nb = 100000, M = M,
+  ha = h, hb = h, hu = h, nu = 0, eta = 0, gamma = gamma_alt, delta = delta_alt,
+  p = p_hl, q = 0, r = r_hl, s = s_hl, af_ref_file = af_ref_file
+)
+
+M_hl = M_l + M_h
+p_hl = M_hl/M
+r_hl = M_h/M_hl
+s_hl = M_l/M_hl
+bialt_hl_agb <- tibble(
+  name = "PolyG: high A, low B; Na > Nb",
+  n_iter = n_iter, Na = 100000, Nb = 25000, M = M,
+  ha = h, hb = h, hu = h, nu = 0, eta = 0, gamma = gamma_alt, delta = delta_alt,
+  p = p_hl, q = 0, r = r_hl, s = s_hl, af_ref_file = af_ref_file
+)
+
+M_hl = M_l + M_h
+p_hl = M_hl/M
+r_hl = M_h/M_hl
+s_hl = M_l/M_hl
+bialt_hl_bga <- tibble(
+  name = "PolyG: high A, low B; Na < Nb",
+  n_iter = n_iter, Na = 25000, Nb = 100000, M = M,
+  ha = h, hb = h, hu = h, nu = 0, eta = 0, gamma = gamma_alt, delta = delta_alt,
+  p = p_hl, q = 0, r = r_hl, s = s_hl, af_ref_file = af_ref_file
+)
+
+sim_settings_bi_alt <- dplyr::bind_rows(bialt_hh_eq, bialt_hh_agb, bialt_hl_eq, bialt_hl_agb, bialt_hl_bga)
+```
+
+```{r}
+n_cores = 8
+sjob_bi_alt <- rslurm::slurm_apply(
+  run_sim_niter, sim_settings_bi_alt, jobname = "bimr_bi_alt", nodes = nrow(sim_settings_bi_alt),
+  cpus_per_node = 1, slurm_options = list(time = "36:00:00", mem = "40G"),
+  add_objects = c("run_sim", "generate_sumstats_glcm_sdbeta", "generate_sumstats_glcm", "n_cores", "h2_to_s2"),
+  submit = F)
+```
+
+
+
+
+```{r}
+sjob_alt_np <- rslurm::slurm_job(jobname = "bimr_alt_np", nodes = nrow(sim_settings_alt_np))
+sjob_alt_wp <- rslurm::slurm_job(jobname = "bimr_alt_wp", nodes = nrow(sim_settings_alt_wp))
+```
+
+```{r}
+alt_np_results <- rslurm::get_slurm_out(sjob_alt_np, outtype = "table")
+alt_wp_results <- rslurm::get_slurm_out(sjob_alt_wp, outtype = "table")
+```
+
+```{r}
+alt_np_results_summary <- make_summary_tibble(alt_np_results)
+alt_wp_results_summary <- make_summary_tibble(alt_wp_results)
+```
+
+
+```{r}
+theme_set(theme_classic())
+
+show_methods = c("egger_5e-8", "egger_wf_5e-8", "egger_s_5e-8", "cause_1e-3", "ivw_5e-8", "mr_mix_5e-8", "mr_presso_5e-8")
+
+alt_np_results_summary %>%
+  filter(method %in% show_methods) %>%
+  filter(Na == 100000, Nb == 100000) %>%
+  ggplot() +
+  # geom_line(aes(x=q, y=stat_ab, color=method)) +
+  geom_line(aes(x=gamma, y=stat_ab, color=method)) +
+  # ylim(0, 0.2) +
+  facet_wrap(vars(name), nrow=1)
+
+alt_np_results_summary %>%
+  filter(method %in% show_methods) %>%
+  filter(Na == 100000, Nb == 100000) %>%
+  ggplot() +
+  # geom_line(aes(x=q, y=stat_ab, color=method)) +
+  geom_line(aes(x=gamma, y=stat_ba, color=method)) +
+  # ylim(0, 0.2) +
+  facet_wrap(vars(name), nrow=1)
+
+alt_np_results_summary %>%
+  filter(method %in% show_methods) %>%
+  filter(Na == 25000, Nb == 100000) %>%
+  ggplot() +
+  # geom_line(aes(x=q, y=stat_ab, color=method)) +
+  geom_line(aes(x=gamma, y=stat_ab, color=method)) +
+  # ylim(0, 0.2) +
+  facet_wrap(vars(name), nrow=1)
+
+alt_np_results_summary %>%
+  filter(method %in% show_methods) %>%
+  filter(Na == 25000, Nb == 100000) %>%
+  ggplot() +
+  # geom_line(aes(x=q, y=stat_ab, color=method)) +
+  geom_line(aes(x=gamma, y=stat_ba, color=method)) +
+  # ylim(0, 0.2) +
+  facet_wrap(vars(name), nrow=1)
+
+alt_np_results_summary %>%
+  filter(method %in% show_methods) %>%
+  filter(Na == 100000, Nb == 25000) %>%
+  ggplot() +
+  # geom_line(aes(x=q, y=stat_ab, color=method)) +
+  geom_line(aes(x=gamma, y=stat_ab, color=method)) +
+  # ylim(0, 0.2) +
+  facet_wrap(vars(name), nrow=1)
+
+alt_np_results_summary %>%
+  filter(method %in% show_methods) %>%
+  filter(Na == 100000, Nb == 25000) %>%
+  ggplot() +
+  # geom_line(aes(x=q, y=stat_ab, color=method)) +
+  geom_line(aes(x=gamma, y=stat_ba, color=method)) +
+  # ylim(0, 0.2) +
+  facet_wrap(vars(name), nrow=1)
+```
+
+```{r}
+alt_wp_results_summary %>%
+  filter(nu == sqrt(0.03), eta == sqrt(0.03)) %>%
+  filter(method %in% c("egger_5e-8", "egger_wa_5e-8", "egger_wx_5e-8", "ivw_5e-8", "cause_1e-3")) %>%
+  ggplot() +
+  # geom_line(aes(x=q, y=stat_ab, color=method)) +
+  geom_col(aes(x=method, y=stat_ab, color=method)) +
+  # ylim(0, 0.2) +
+  facet_wrap(vars(name), nrow=3)
+
+alt_wp_results_summary %>%
+  filter(nu == sqrt(0.1), eta == sqrt(0.1)) %>%
+  filter(method %in% c("egger_5e-8", "egger_wa_5e-8", "egger_wx_5e-8", "ivw_5e-8", "cause_1e-3")) %>%
+  ggplot() +
+  # geom_line(aes(x=q, y=stat_ab, color=method)) +
+  geom_col(aes(x=method, y=stat_ba, color=method)) +
+  # ylim(0, 0.2) +
+  facet_wrap(vars(name), nrow=3)
+
+alt_wp_results_summary %>%
+  filter(nu == sqrt(0.03), eta == sqrt(0.1)) %>%
+  filter(method %in% c("egger_5e-8", "egger_wa_5e-8", "egger_wx_5e-8", "ivw_5e-8", "cause_1e-3")) %>%
+  ggplot() +
+  # geom_line(aes(x=q, y=stat_ab, color=method)) +
+  geom_col(aes(x=method, y=stat_ab, color=method)) +
+  # ylim(0, 0.2) +
+  facet_wrap(vars(name), nrow=3)
+
+alt_wp_results_summary %>%
+  filter(nu == sqrt(0.03), eta == sqrt(0.1)) %>%
+  filter(method %in% c("egger_5e-8", "egger_wa_5e-8", "egger_wx_5e-8", "ivw_5e-8", "cause_1e-3")) %>%
+  ggplot() +
+  # geom_line(aes(x=q, y=stat_ab, color=method)) +
+  geom_col(aes(x=method, y=stat_ba, color=method)) +
+  # ylim(0, 0.2) +
+  facet_wrap(vars(name), nrow=3)
+```
