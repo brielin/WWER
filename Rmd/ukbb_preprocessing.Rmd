@@ -1,7 +1,6 @@
 # Load Packages
 ```{r}
-# install.packages("/gpfs/commons/home/bbrown/ukbb_network/inspre", repos = NULL, type = "source")
-require(inspre)
+# TODO(brielin): A lot of this code doesn't work now that the data is on AWS.
 require(tidyverse)
 require(foreach)
 require(igraph)
@@ -41,7 +40,7 @@ ukbb_ldsc_results <- ukbb_ldsc_results %>% filter((h2_z > 4 & isNotPrimary == F 
 
 ukbb_info <- dplyr::left_join(ukbb_ldsc_results, ukbb_ldsc_manifest, by = c("phenotype", "description")) %>% 
   filter(has_v2_replacement == F, !grepl("dilution_factor", ldsc_sumstat_file)) %>%
-  group_by(description) %>% mutate(count = n()) %>% ungroup() %>% filter(count == 3) %>%
+  group_by(phenotype, description) %>% mutate(count = n()) %>% ungroup() %>% filter(count == 3) %>%
   mutate(dest_file = paste0(save_dir, "/", phenotype, ".", sex.y, ".tsv.bgz"))
 
 # future::plan("multisession", workers = n_cores)
@@ -61,7 +60,7 @@ rg_info <- ukbb_info %>% dplyr::select(phenotype, description, sex.y, dest_file,
   dplyr::mutate(ldsr_result_file = paste0(ldsc_mf_result_dir, phenotype, ".mfrg"))
 
 # future::plan("multisession", workers = n_cores)
-# rg_info %>% dplyr::select(female, male, ldsr_result_file) %>% 
+# rg_info %>% dplyr::select(female, male, ldsr_result_file) %>%
 #   furrr::future_pwalk(function(female, male, ldsr_result_file){
 #     if(!file.exists(paste0(ldsr_result_file, ".log"))){
 #       system(paste0("ldsc.py --rg ", female, ",", male, " --ref-ld-chr ", ref_ld_chr,
@@ -83,7 +82,7 @@ rg_info %>% ggplot() + geom_histogram(aes(x=ci)) + xlim(0, 1)
 rg_cutoff = 0.5
 z0_cutoff = 2
 
-selected_phenos <- rg_info %>% filter(mf_rg > rg_cutoff, z0 > z0_cutoff)
+selected_phenos_ <- rg_info %>% filter(mf_rg > rg_cutoff, z0 > z0_cutoff)
 ```
 
 
@@ -93,17 +92,21 @@ ref_ld_chr = "/gpfs/commons/projects/UKBB/sumstats/ldsc_results/eur_w_ld_chr/"
 w_ld_chr = "/gpfs/commons/projects/UKBB/sumstats/ldsc_results/eur_w_ld_chr/"
 ldsc_selected_result_dir = "/gpfs/commons/projects/UKBB/sumstats/ldsc_results/selected_rg/"
 
+# 661 phenotypes
 selected_phenos <- selected_phenos %>% dplyr::mutate(ldsr_selected_file = paste0(ldsc_selected_result_dir, phenotype, ".rg"))
 
 all_phenos = do.call(function(...){paste(..., sep = ",")}, as.list(selected_phenos$both_sexes))
 
 # future::plan("multisession", workers = n_cores)
-# furrr::future_pwalk(head(selected_phenos), ~ system(paste0("ldsc.py --rg ", ..3, ",", all_phenos, " --ref-ld-chr ", ref_ld_chr, " --w-ld-chr ", w_ld_chr, " --out ", ..12)))
+# furrr::future_pwalk(
+#   selected_phenos, ~ if(!file.exists(paste0(..12, ".log"))) {
+#     system(paste0("ldsc.py --rg ", ..4, ",", all_phenos, " --ref-ld-chr ", ref_ld_chr, " --w-ld-chr ", w_ld_chr, " --out ", ..13))
+#     })
 
 run_and_parse_ldsc_rg <- function(pheno1_file, pheno2_files, ref_ld_chr_dir, w_ld_chr_dir, out_file){
-  if(!file.exists(paste0(out_file, ".log"))){
-    system(paste0("ldsc.py --rg ", pheno1_file, ",", pheno2_files, " --ref-ld-chr ", ref_ld_chr_dir, " --w-ld-chr ", w_ld_chr_dir, " --out ", out_file))
-  }
+  # if(!file.exists(paste0(out_file, ".log"))){
+  system(paste0("ldsc.py --rg ", pheno1_file, ",", pheno2_files, " --ref-ld-chr ", ref_ld_chr_dir, " --w-ld-chr ", w_ld_chr_dir, " --out ", out_file))
+  # }
   n_lines <- length(read_lines(paste0(out_file, ".log")))
   n_phenos <- length(strsplit(pheno2_files, ",")[[1]])
   result_table <- readr::read_delim(paste0(out_file, ".log"), skip = n_lines - n_phenos - 4, delim = " ", trim_ws = T, n_max = n_phenos)
@@ -120,9 +123,9 @@ ldsc_settings <- tibble(
 
 
 ```{r}
-sjob_run_ldsc <- rslurm::slurm_apply(
-  run_and_parse_ldsc_rg, ldsc_settings, jobname = "ldsc", nodes = nrow(ldsc_settings),
-  cpus_per_node = 1, slurm_options = list(time = "12:00:00", mem = "8G"), submit = T)
+# sjob_run_ldsc <- rslurm::slurm_apply(
+#   run_and_parse_ldsc_rg, ldsc_settings, jobname = "ldsc", nodes = nrow(ldsc_settings),
+#   cpus_per_node = 1, slurm_options = list(time = "12:00:00", mem = "8G"), submit = T)
 ```
 
 
@@ -176,7 +179,8 @@ filter_phenotypes = c(
   "6159_100",	# Pain type(s) experienced in last month: None of the above
   "6160_100",	# Leisure/social activities: None of the above
   "6164_100",	# Types of physical activity in last 4 weeks: None of the above
-  "6179_100"	# Mineral and other dietary supplements: None of the above
+  "6179_100",	# Mineral and other dietary supplements: None of the above
+  "48_irnt" # Waste circumference has rg > 0.9 with BMI and slightly more samples, but BMI is more interperatable
 )
 
 
@@ -191,7 +195,7 @@ for(i in 1:length(pheno_by_neff)) {
   # print(length(filter_phenotypes))
 }
 
-selected_phenos<- filter(selected_phenos, !(phenotype %in% filter_phenotypes))
+selected_phenos <- filter(selected_phenos, !(phenotype %in% filter_phenotypes))
 rg_result <- filter(rg_results, !(phenotype.1 %in% filter_phenotypes), !(phenotype.2 %in% filter_phenotypes))
 
 save(selected_phenos, file = "/gpfs/commons/home/bbrown/ukbb_network/saved_rdata/selected_phenotypes.Rdata")
@@ -200,16 +204,12 @@ save(rg_results, file = "/gpfs/commons/home/bbrown/ukbb_network/saved_rdata/rg_r
 
 
 ```{r}
-# TODO(brielin): The LDSC files are HM3 only. Need to download the GWAS
-# files and clump/filter those instead.
 ukbb_full_loc = "/nfs/scratch/bbrown/ukbb_full_raw/"
-# ukbb_full_files <- ukbb_info %>% filter(phenotype %in% selected_phenos$phenotype, sex.y %in% c("male", "female")) %>% select(phenotype, sex.y, gwas_dropbox) %>% mutate(ukbb_full_file = paste0(ukbb_full_loc, phenotype, ".", sex.y, ".tsv.bgz"))
-ukbb_full_files <- ukbb_info %>% filter(phenotype %in% selected_phenos$phenotype, sex.y %in% c("male", "female")) %>% select(phenotype, sex.y, gwas_dropbox) %>% mutate(old = paste0(ukbb_full_loc, phenotype, ".", sex.y), ukbb_full_file = paste0(ukbb_full_loc, phenotype, ".", sex.y, ".tsv.bgz"))
+ukbb_full_files <- ukbb_info %>% filter(phenotype %in% selected_phenos$phenotype, sex.y %in% c("male", "female")) %>% select(phenotype, sex.y, gwas_dropbox) %>% mutate(ukbb_full_file = paste0(ukbb_full_loc, phenotype, ".", sex.y, ".tsv.bgz"))
 
 
-future::plan("multisession", workers = n_cores)
+# future::plan("multisession", workers = n_cores)
 # furrr::future_walk2(ukbb_full_files$gwas_dropbox, ukbb_full_files$ukbb_full_file, ~ if(!file.exists(.y)) download.file(.x, .y, method = "wget"))
-furrr::future_walk2(ukbb_full_files$old, ukbb_full_files$ukbb_full_file, ~ system(paste0("mv ", .x, " ", .y)))
 ```
 
 
@@ -223,7 +223,7 @@ furrr::future_walk2(ukbb_full_files$old, ukbb_full_files$ukbb_full_file, ~ syste
 #   cut -f 2 "${REFERENCE_BED}${i}.bim" | sort | uniq -d > "ukbb_dups_chr${i}.txt"
 # done
 load("/gpfs/commons/home/bbrown/ukbb_network/saved_rdata/selected_phenotypes.Rdata")
-p_thresh = 1e-4
+p_thresh = 0.0001
 reference_bed = "/nfs/scratch/bbrown/ukbb_ref/ukb_imp_cleaned_rel_hwe_chr"
 dups = "/nfs/scratch/bbrown/ukbb_ref/ukbb_dups_chr"
 out_dir = "/nfs/scratch/bbrown/clumped/"
@@ -264,7 +264,7 @@ split_and_clump <- function(out_dir, chr, gwas_file, ldsc_file, variants_file, r
   readr::write_tsv(sumstats, chr_chunk_file)
   plink_command <- paste0(
     "plink --bfile ", reference_bed, chr,
-    " --thin-indiv-count 100000 ",
+#    " --thin-indiv-count 100000 ",
     " --clump ", chr_chunk_file,
     " --clump-snp-field rsid",
     " --clump-r2 0.05 --clump-kb 500 --clump-field \"pval\" --clump-p1 ", p_thresh,
@@ -275,6 +275,8 @@ split_and_clump <- function(out_dir, chr, gwas_file, ldsc_file, variants_file, r
   if(file.exists(clumpfile)) system(paste0("tail -n +2 ", clumpfile, " | awk '{print $3}' > ", snpfile))
 }
 
+selected_phenos_all <- selected_phenos
+selected_phenos <- filter(selected_phenos, phenotype == "21001_irnt")
 clump_settings <- tibble(
   out_dir = rep(paste0(out_dir, selected_phenos$phenotype, ".male/"), each = 22),
   chr = rep(c(1:22), times = length(selected_phenos$phenotype)),
@@ -287,14 +289,14 @@ clump_settings <- tibble(
 )
 
 sjob_run_clump <- rslurm::slurm_apply(
-   split_and_clump, clump_settings, jobname = "clump", nodes = ceiling(nrow(clump_settings)/2),
-   cpus_per_node = 2, slurm_options = list(time = "12:00:00", mem = "32G", constraint = "v5"), submit = T)
+   split_and_clump, clump_settings, jobname = "clump", nodes = ceiling(nrow(clump_settings)),
+   cpus_per_node = 1, slurm_options = list(time = "12:00:00", mem = "32G", constraint = "v5"), submit = T)
 ```
 
 
 ```{r}
 # Filter summary statistics down to clump index SNPs in at least one phenotype.
-n_cores = 16
+n_cores = 8
 all_snps = "/gpfs/commons/projects/UKBB/sumstats/snps_to_use.txt"
 filter_script = "ukbb_analysis/filter_ukbb_sumstats.bash"
 gwas_raw_dir = "/gpfs/commons/projects/UKBB/sumstats/ukbb_full_raw/"
@@ -308,10 +310,4 @@ load("/gpfs/commons/home/bbrown/ukbb_network/saved_rdata/selected_phenotypes.Rda
 future::plan("multisession", workers = n_cores)
 furrr::future_walk(selected_phenos$phenotype, ~ system(paste0("bash ../", filter_script, " ", gwas_raw_dir, .x, ".male.tsv.bgz ", variants_file, " ", all_snps)))
 furrr::future_walk(selected_phenos$phenotype, ~ system(paste0("bash ../", filter_script, " ", gwas_raw_dir, .x, ".female.tsv.bgz ", variants_file, " ", all_snps)))
-```
-
-```{r}
-# Calculate TCEs
-# TODO(brielin): Actually use AFs to do inverse-variance weighting?
-
 ```

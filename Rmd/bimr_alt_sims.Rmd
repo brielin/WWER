@@ -35,8 +35,8 @@ se <- function(x, na.rm = FALSE){
 make_summary_tibble <- function(plot_tibble){
   summary_tibble <- plot_tibble %>%
     dplyr::group_by(name, method, mr_method, p_thresh, Na, Nb, M, ha, hb, hu, nu, eta, gamma, delta, q, r, s, Rab, Rba) %>% 
-    mutate(stat_ab = mean(pab < 0.05, na.rm=T), stat_ba = mean(pba < 0.05, na.rm=T),
-           se_stat_ab := se(pab < 0.05, na.rm=T), se_stat_ba := se(pba < 0.05, na.rm=T),
+    mutate(stat_ab = mean(pab < 0.05, na.rm=T), stat_ba = mean(pba < 0.05, na.rm=T), stat_both = mean(pab < 0.05 & pba < 0.05, na.rm=T),
+           se_stat_ab = se(pab < 0.05, na.rm=T), se_stat_ba = se(pba < 0.05, na.rm=T), se_stat_both = se(pab < 0.05 & pba < 0.05, na.rm=T),
            mae_ab = mean(abs(Rab - Rab_hat), na.rm=T), mae_ba = mean(abs(Rba - Rba_hat), na.rm=T),
            se_mae_ab = se(abs(Rab - Rab_hat), na.rm=T), se_mae_ba = se(abs(Rba - Rba_hat), na.rm=T),
            Rab_hat = mean(Rab_hat, na.rm=T), Rba_hat = mean(Rba_hat, na.rm=T),
@@ -44,8 +44,9 @@ make_summary_tibble <- function(plot_tibble){
            runtime = mean(runtime, na.rm=T), rg = mean(rg)) %>%
     ungroup() %>%
     distinct(name, method, mr_method, p_thresh, Na, Nb, M, ha, hb, hu, rg, nu, eta, gamma, delta, q, r, s, Rab, Rba,
-             stat_ab, stat_ba, se_stat_ab, se_stat_ba, mae_ab, mae_ba, se_mae_ab, se_mae_ba,
-             Rab_hat, Rba_hat, Sab_hat, Sba_hat, runtime)
+             stat_ab, stat_ba, stat_both, se_stat_ab, se_stat_ba, se_stat_both, mae_ab, mae_ba, se_mae_ab, se_mae_ba,
+             Rab_hat, Rba_hat, Sab_hat, Sba_hat, runtime) %>%
+    mutate(method = if_else(method == "egger_wf_5e-8", "aaa_egger_wf_5e-8", method))
   return(summary_tibble)
 }
 
@@ -124,7 +125,7 @@ n_cores = 8
 sjob_alt_np <- rslurm::slurm_apply(
   run_sim_niter, sim_settings_alt_np, jobname = "bimr_alt_np", nodes = nrow(sim_settings_alt_np),
   cpus_per_node = 1, slurm_options = list(time = "36:00:00", mem = "40G"),
-  add_objects = c("run_sim", "generate_sumstats_glcm_sdbeta", "generate_sumstats_glcm", "n_cores", "h2_to_s2"),
+  add_objects = c("n_cores"),
   submit = F)
 ```
 
@@ -222,7 +223,7 @@ n_cores = 8
 sjob_alt_wp <- rslurm::slurm_apply(
   run_sim_niter, sim_settings_alt_wp, jobname = "bimr_alt_wp", nodes = nrow(sim_settings_alt_wp),
   cpus_per_node = 1, slurm_options = list(time = "36:00:00", mem = "40G"),
-  add_objects = c("run_sim", "generate_sumstats_glcm_sdbeta", "generate_sumstats_glcm", "n_cores", "h2_to_s2"),
+  add_objects = c("n_cores"),
   submit = F)
 ```
 
@@ -233,8 +234,11 @@ af_ref_file <- "/gpfs/commons/projects/UKBB/sumstats/ldsc_results/eur_w_ld_chr/1
 
 h = 0.25
 M = 500000
+# Originally I had negative delta, but results are symmetric in delta.
 gamma_alt = c(rep(-sqrt(0.1), 6), rep(-sqrt(0.03), 6), rep(-sqrt(0.01), 6), rep(sqrt(0.01), 6), rep(sqrt(0.03), 6), rep(sqrt(0.1), 6))
 delta_alt = rep(c(-sqrt(0.1), -sqrt(0.03), -sqrt(0.01), sqrt(0.01), sqrt(0.03), sqrt(0.1)), 6)
+# delta_alt = rep(c(sqrt(0.01), sqrt(0.03), sqrt(0.1)), 3)
+# gamma_alt = c(rep(-sqrt(0.1), 3), rep(-sqrt(0.03), 3), rep(-sqrt(0.01), 3), rep(sqrt(0.01), 3), rep(sqrt(0.03), 3), rep(sqrt(0.1), 3))
 M_l = 500
 M_h = 2000
 
@@ -301,7 +305,7 @@ n_cores = 8
 sjob_bi_alt <- rslurm::slurm_apply(
   run_sim_niter, sim_settings_bi_alt, jobname = "bimr_bi_alt", nodes = nrow(sim_settings_bi_alt),
   cpus_per_node = 1, slurm_options = list(time = "36:00:00", mem = "40G"),
-  add_objects = c("run_sim", "generate_sumstats_glcm_sdbeta", "generate_sumstats_glcm", "n_cores", "h2_to_s2"),
+  add_objects = c("n_cores"),
   submit = F)
 ```
 
@@ -311,113 +315,281 @@ sjob_bi_alt <- rslurm::slurm_apply(
 ```{r}
 sjob_alt_np <- rslurm::slurm_job(jobname = "bimr_alt_np", nodes = nrow(sim_settings_alt_np))
 sjob_alt_wp <- rslurm::slurm_job(jobname = "bimr_alt_wp", nodes = nrow(sim_settings_alt_wp))
+sjob_bi_alt <- rslurm::slurm_job(jobname = "bimr_bi_alt", nodes = nrow(sim_settings_bi_alt))
 ```
 
 ```{r}
 alt_np_results <- rslurm::get_slurm_out(sjob_alt_np, outtype = "table")
 alt_wp_results <- rslurm::get_slurm_out(sjob_alt_wp, outtype = "table")
+bi_alt_results <- rslurm::get_slurm_out(sjob_bi_alt, outtype = "table")
 ```
 
 ```{r}
 alt_np_results_summary <- make_summary_tibble(alt_np_results)
 alt_wp_results_summary <- make_summary_tibble(alt_wp_results)
+bi_alt_results_summary <- make_summary_tibble(bi_alt_results)
 ```
 
 
-```{r}
+```{r, fig.height = 12, fig.width = 12}
+# Figure 3 for np alt and bi-alt
 theme_set(theme_classic())
 
-show_methods = c("egger_5e-8", "egger_wf_5e-8", "egger_s_5e-8", "cause_1e-3", "ivw_5e-8", "mr_mix_5e-8", "mr_presso_5e-8")
+# show_methods = c("egger_5e-8", "egger_wf_5e-8", "egger_s_5e-8", "cause_1e-3", "ivw_5e-8", "mr_mix_5e-8", "mr_presso_5e-8")
+show_methods = c("egger_5e-8", "aaa_egger_wf_5e-8", "egger_s_5e-8", "cause_1e-3", "ivw_5e-8", "mr_mix_5e-8", "mr_presso_5e-8", "mbe_5e-8")
+show_labels = c("WWER", "CAUSE", "Egger", "Steiger", "IVW", "MBE", "MR Mix", "MR PRESSO")
 
-alt_np_results_summary %>%
+g1 <- alt_np_results_summary %>%
   filter(method %in% show_methods) %>%
   filter(Na == 100000, Nb == 100000) %>%
   ggplot() +
-  # geom_line(aes(x=q, y=stat_ab, color=method)) +
   geom_line(aes(x=gamma, y=stat_ab, color=method)) +
-  # ylim(0, 0.2) +
-  facet_wrap(vars(name), nrow=1)
+  geom_errorbar(aes(ymin = stat_ab - 1.96*se_stat_ab, ymax = stat_ab + 1.96*se_stat_ab, x = gamma), width = 0.025) +
+  facet_wrap(vars(name), nrow=1) +
+  scale_color_brewer(labels = show_labels, palette = "Dark2") +
+  labs(x = NULL, title = "a) One way alt, equal sample size", y = NULL) + guides(color = FALSE)
 
-alt_np_results_summary %>%
+g2 <- alt_np_results_summary %>%
+  filter(method %in% show_methods) %>%
+  filter(Na == 25000, Nb == 100000) %>%
+  ggplot() +
+  geom_line(aes(x=gamma, y=stat_ab, color=method)) +
+  geom_errorbar(aes(ymin = stat_ab - 1.96*se_stat_ab, ymax = stat_ab + 1.96*se_stat_ab, x = gamma), width = 0.025) +
+  facet_wrap(vars(name), nrow=1) +
+  scale_color_brewer(labels = show_labels, palette = "Dark2") +
+  labs(x = NULL, title = "b) One way alt, Na < Nb", y = NULL) + guides(color = FALSE)
+
+g3 <- alt_np_results_summary %>%
+  filter(method %in% show_methods) %>%
+  filter(Na == 100000, Nb == 25000) %>%
+  ggplot() +
+  geom_line(aes(x=gamma, y=stat_ab, color=method)) +
+  geom_errorbar(aes(ymin = stat_ab - 1.96*se_stat_ab, ymax = stat_ab + 1.96*se_stat_ab, x = gamma), width = 0.025) +
+  facet_wrap(vars(name), nrow=1) +
+  scale_color_brewer(labels = show_labels, palette = "Dark2") +
+  labs(x = NULL, title = "c) One way alt, Na > Nb", y = NULL, color = "Method")
+
+g4 <- bi_alt_results_summary %>%
+  filter(delta == sqrt(0.01)) %>%
+  filter(method %in% show_methods) %>%
+  ggplot() +
+  geom_line(aes(x=gamma, y=stat_both, color=method)) +
+  geom_errorbar(aes(ymin = stat_both - 1.96*se_stat_both, ymax = stat_both + 1.96*se_stat_both, x = gamma), width = 0.025) +
+  facet_wrap(vars(name), nrow=1) +
+  scale_color_brewer(labels = show_labels, palette = "Dark2") +
+  labs(x = NULL, title = "d) Bi-directional alt, delta = 0.1", y = NULL) + guides(color = FALSE)
+
+
+g5 <- bi_alt_results_summary %>%
+  filter(delta == sqrt(0.03)) %>%
+  filter(method %in% show_methods) %>%
+  ggplot() +
+  geom_line(aes(x=gamma, y=stat_both, color=method)) +
+  geom_errorbar(aes(ymin = stat_both - 1.96*se_stat_both, ymax = stat_both + 1.96*se_stat_both, x = gamma), width = 0.025) +
+  facet_wrap(vars(name), nrow=1) +
+  scale_color_brewer(labels = show_labels, palette = "Dark2") +
+  labs(x = NULL, title = "e) Bi-directional alt, delta = 0.17", y = NULL) + guides(color = FALSE)
+
+
+g6 <- bi_alt_results_summary %>%
+  filter(delta == sqrt(0.1)) %>%
+  filter(method %in% show_methods) %>%
+  ggplot() +
+  geom_line(aes(x=gamma, y=stat_both, color=method)) +
+  geom_errorbar(aes(ymin = stat_both - 1.96*se_stat_both, ymax = stat_both + 1.96*se_stat_both, x = gamma), width = 0.025) +
+  facet_wrap(vars(name), nrow=1) +
+  scale_color_brewer(labels = show_labels, palette = "Dark2") +
+  labs(x = NULL, title = "f) Bi-directional alt, delta = 0.32", y = NULL) + guides(color = FALSE)
+
+ggarrange(g1, g2, g3, g4, g5, g6, nrow=6, left = "Power", bottom = "Gamma")
+
+```
+
+```{r, fig.width=12, fig.height=6}
+# Supp figure with reverse direction FPR
+g1 <- alt_np_results_summary %>%
+  filter(method %in% show_methods) %>%
+  filter(Na == 100000, Nb == 25000) %>%
+  ggplot() +
+  geom_line(aes(x=gamma, y=stat_ba, color=method)) +
+  geom_errorbar(aes(ymin = stat_ba - 1.96*se_stat_ba, ymax = stat_ba + 1.96*se_stat_ba, x = gamma), width = 0.025) +
+  facet_wrap(vars(name), nrow=1) +
+  ylim(0, 1) +
+  scale_color_brewer(labels =show_labels, palette = "Dark2") +
+  labs(x = NULL, title = "c) One way alt reverse positivity, study A higher power", y = NULL) + guides(color = FALSE)
+
+g2 <- alt_np_results_summary %>%
+  filter(method %in% show_methods) %>%
+  filter(Na == 25000, Nb == 100000) %>%
+  ggplot() +
+  geom_line(aes(x=gamma, y=stat_ba, color=method)) +
+  geom_errorbar(aes(ymin = stat_ba - 1.96*se_stat_ba, ymax = stat_ba + 1.96*se_stat_ba, x = gamma), width = 0.025) +
+  facet_wrap(vars(name), nrow=1) +
+  scale_color_brewer(labels =show_labels, palette = "Dark2") +
+  labs(x = NULL, title = "b) One way alt reverse positivity, study B higher power", y = NULL, color = "Method")
+
+g3 <- alt_np_results_summary %>%
   filter(method %in% show_methods) %>%
   filter(Na == 100000, Nb == 100000) %>%
   ggplot() +
-  # geom_line(aes(x=q, y=stat_ab, color=method)) +
   geom_line(aes(x=gamma, y=stat_ba, color=method)) +
-  # ylim(0, 0.2) +
-  facet_wrap(vars(name), nrow=1)
+  geom_errorbar(aes(ymin = stat_ba - 1.96*se_stat_ba, ymax = stat_ba + 1.96*se_stat_ba, x = gamma), width = 0.025) +
+  facet_wrap(vars(name), nrow=1) +
+  scale_color_brewer(labels =show_labels, palette = "Dark2") +
+  labs(x = NULL, title = "a) One way alt reverse positivity, equal sample sizes", y = NULL) + guides(color = FALSE)
 
-alt_np_results_summary %>%
-  filter(method %in% show_methods) %>%
-  filter(Na == 25000, Nb == 100000) %>%
-  ggplot() +
-  # geom_line(aes(x=q, y=stat_ab, color=method)) +
-  geom_line(aes(x=gamma, y=stat_ab, color=method)) +
-  # ylim(0, 0.2) +
-  facet_wrap(vars(name), nrow=1)
+ggarrange(g3, g2, g1, nrow=3, left = "FPR, B to A direction", bottom = "Gamma, A to B direction")
+```
 
-alt_np_results_summary %>%
-  filter(method %in% show_methods) %>%
-  filter(Na == 25000, Nb == 100000) %>%
-  ggplot() +
-  # geom_line(aes(x=q, y=stat_ab, color=method)) +
-  geom_line(aes(x=gamma, y=stat_ba, color=method)) +
-  # ylim(0, 0.2) +
-  facet_wrap(vars(name), nrow=1)
 
-alt_np_results_summary %>%
+```{r, fig.width=13}
+g1 <- alt_wp_results_summary %>%
+  filter(nu == sqrt(0.05), eta == sqrt(0.05)) %>%
   filter(method %in% show_methods) %>%
-  filter(Na == 100000, Nb == 25000) %>%
   ggplot() +
-  # geom_line(aes(x=q, y=stat_ab, color=method)) +
-  geom_line(aes(x=gamma, y=stat_ab, color=method)) +
-  # ylim(0, 0.2) +
-  facet_wrap(vars(name), nrow=1)
+  geom_col(aes(x=method, y=stat_ab, fill=method), position = "dodge") + 
+  geom_errorbar(aes(ymin = stat_ab - 1.96*se_stat_ab, ymax = stat_ab + 1.96*se_stat_ab, x=method), width = 0.15) +
+  scale_fill_brewer(labels =show_labels, palette = "Dark2") +
+  ylim(0, 1) +
+  theme(axis.text.x=element_blank(), axis.ticks.x=element_blank()) +
+  facet_wrap(vars(name), nrow=1) +
+  labs(x = NULL, title = "a) One way alt with equal weak pleiotropy", y = NULL) + guides(fill = FALSE)
 
-alt_np_results_summary %>%
+g2 <- alt_wp_results_summary %>%
+  filter(nu == sqrt(0.2), eta == sqrt(0.2)) %>%
   filter(method %in% show_methods) %>%
-  filter(Na == 100000, Nb == 25000) %>%
   ggplot() +
-  # geom_line(aes(x=q, y=stat_ab, color=method)) +
-  geom_line(aes(x=gamma, y=stat_ba, color=method)) +
-  # ylim(0, 0.2) +
-  facet_wrap(vars(name), nrow=1)
+  geom_col(aes(x=method, y=stat_ab, fill=method), position = "dodge") + 
+  geom_errorbar(aes(ymin = stat_ab - 1.96*se_stat_ab, ymax = stat_ab + 1.96*se_stat_ab, x=method), width = 0.15) +
+  scale_fill_brewer(labels =show_labels, palette = "Dark2") +
+  ylim(0, 1) +
+  theme(axis.text.x=element_blank(), axis.ticks.x=element_blank()) +
+  facet_wrap(vars(name), nrow=1) +
+  labs(x = NULL, title = "b) One way alt with equal strong pleiotropy", y = NULL, fill = "Method")
+
+g3 <- alt_wp_results_summary %>%
+  filter(nu == sqrt(0.05), eta == sqrt(0.2)) %>%
+  filter(method %in% show_methods) %>%
+  ggplot() +
+  geom_col(aes(x=method, y=stat_ab, fill=method), position = "dodge") + 
+  geom_errorbar(aes(ymin = stat_ab - 1.96*se_stat_ab, ymax = stat_ab + 1.96*se_stat_ab, x=method), width = 0.15) +
+  scale_fill_brewer(labels =show_labels, palette = "Dark2") +
+  ylim(0, 1) +
+  theme(axis.text.x=element_blank(), axis.ticks.x=element_blank()) +
+  facet_wrap(vars(name), nrow=1) +
+  labs(x = NULL, title = "c) One way alt with stronger pleiotropic effect on A", y = NULL) + guides(fill = FALSE)
+
+g4 <- alt_wp_results_summary %>%
+  filter(nu == sqrt(0.2), eta == sqrt(0.05)) %>%
+  filter(method %in% show_methods) %>%
+  ggplot() +
+  geom_col(aes(x=method, y=stat_ab, fill=method), position = "dodge") + 
+  geom_errorbar(aes(ymin = stat_ab - 1.96*se_stat_ab, ymax = stat_ab + 1.96*se_stat_ab, x=method), width = 0.15) +
+  scale_fill_brewer(labels =show_labels, palette = "Dark2") +
+  ylim(0, 1) +
+  theme(axis.text.x=element_blank(), axis.ticks.x=element_blank()) +
+  facet_wrap(vars(name), nrow=1) +
+  labs(x = NULL, title = "d) One way alt with stronger pleiotropic effect on B", y = NULL) + guides(fill = FALSE)
+
+ggarrange(g1, g2, g3, g4, nrow=4, left = "Power, A to B direction", bottom = "Method")
+```
+
+
+
+```{r, fig.width=13}
+g1 <- alt_wp_results_summary %>%
+  filter(nu == sqrt(0.05), eta == sqrt(0.05)) %>%
+  filter(method %in% show_methods) %>%
+  ggplot() +
+  geom_col(aes(x=method, y=stat_ba, fill=method), position = "dodge") + 
+  geom_errorbar(aes(ymin = stat_ba - 1.96*se_stat_ba, ymax = stat_ba + 1.96*se_stat_ba, x=method), width = 0.15) +
+  scale_fill_brewer(labels =show_labels, palette = "Dark2") +
+  ylim(0, 1) +
+  theme(axis.text.x=element_blank(), axis.ticks.x=element_blank()) +
+  facet_wrap(vars(name), nrow=1) +
+  labs(x = NULL, title = "a) One way alt with equal weak pleiotropy", y = NULL) + guides(fill = FALSE)
+
+g2 <- alt_wp_results_summary %>%
+  filter(nu == sqrt(0.2), eta == sqrt(0.2)) %>%
+  filter(method %in% show_methods) %>%
+  ggplot() +
+  geom_col(aes(x=method, y=stat_ba, fill=method), position = "dodge") + 
+  geom_errorbar(aes(ymin = stat_ba - 1.96*se_stat_ba, ymax = stat_ba + 1.96*se_stat_ba, x=method), width = 0.15) +
+  scale_fill_brewer(labels =show_labels, palette = "Dark2") +
+  ylim(0, 1) +
+  theme(axis.text.x=element_blank(), axis.ticks.x=element_blank()) +
+  facet_wrap(vars(name), nrow=1) +
+  labs(x = NULL, title = "b) One way alt with equal strong pleiotropy", y = NULL, fill = "Method")
+
+g3 <- alt_wp_results_summary %>%
+  filter(nu == sqrt(0.05), eta == sqrt(0.2)) %>%
+  filter(method %in% show_methods) %>%
+  ggplot() +
+  geom_col(aes(x=method, y=stat_ba, fill=method), position = "dodge") + 
+  geom_errorbar(aes(ymin = stat_ba - 1.96*se_stat_ba, ymax = stat_ba + 1.96*se_stat_ba, x=method), width = 0.15) +
+  scale_fill_brewer(labels =show_labels, palette = "Dark2") +
+  ylim(0, 1) +
+  theme(axis.text.x=element_blank(), axis.ticks.x=element_blank()) +
+  facet_wrap(vars(name), nrow=1) +
+  labs(x = NULL, title = "c) One way alt with stronger pleiotropic effect on A", y = NULL) + guides(fill = FALSE)
+
+g4 <- alt_wp_results_summary %>%
+  filter(nu == sqrt(0.2), eta == sqrt(0.05)) %>%
+  filter(method %in% show_methods) %>%
+  ggplot() +
+  geom_col(aes(x=method, y=stat_ba, fill=method), position = "dodge") + 
+  geom_errorbar(aes(ymin = stat_ba - 1.96*se_stat_ba, ymax = stat_ba + 1.96*se_stat_ba, x=method), width = 0.15) +
+  scale_fill_brewer(labels =show_labels, palette = "Dark2") +
+  ylim(0, 1) +
+  theme(axis.text.x=element_blank(), axis.ticks.x=element_blank()) +
+  facet_wrap(vars(name), nrow=1) +
+  labs(x = NULL, title = "d) One way alt with stronger pleiotropic effect on B", y = NULL) + guides(fill = FALSE)
+
+ggarrange(g1, g2, g3, g4, nrow=4, left = "FPR, B to A direction", bottom = "Method")
 ```
 
 ```{r}
-alt_wp_results_summary %>%
-  filter(nu == sqrt(0.03), eta == sqrt(0.03)) %>%
-  filter(method %in% c("egger_5e-8", "egger_wa_5e-8", "egger_wx_5e-8", "ivw_5e-8", "cause_1e-3")) %>%
-  ggplot() +
-  # geom_line(aes(x=q, y=stat_ab, color=method)) +
-  geom_col(aes(x=method, y=stat_ab, color=method)) +
-  # ylim(0, 0.2) +
-  facet_wrap(vars(name), nrow=3)
+# Table time
+res_pow_np_ab <- alt_np_results_summary %>% dplyr::filter(p_thresh != "5e-6", mr_method != "egger_wa") %>%
+  dplyr::mutate(POW = paste0(stat_ab, " (", round(se_stat_ab, digits=2), ")"), study = paste(name, round(Na, 2), round(Nb, 2), round(gamma, 2))) %>%
+  dplyr::select(study, mr_method, POW) %>% tidyr::pivot_wider(names_from = mr_method, values_from = POW)
 
-alt_wp_results_summary %>%
-  filter(nu == sqrt(0.1), eta == sqrt(0.1)) %>%
-  filter(method %in% c("egger_5e-8", "egger_wa_5e-8", "egger_wx_5e-8", "ivw_5e-8", "cause_1e-3")) %>%
-  ggplot() +
-  # geom_line(aes(x=q, y=stat_ab, color=method)) +
-  geom_col(aes(x=method, y=stat_ba, color=method)) +
-  # ylim(0, 0.2) +
-  facet_wrap(vars(name), nrow=3)
+res_fpr_np_ba <- alt_np_results_summary %>% dplyr::filter(p_thresh != "5e-6", mr_method != "egger_wa") %>%
+  dplyr::mutate(FPR = paste0(stat_ba, " (", round(se_stat_ba, digits=2), ")"), study = paste(name, round(Na, 2), round(Nb, 2), round(gamma, 2))) %>%
+  dplyr::select(study, mr_method, FPR) %>% tidyr::pivot_wider(names_from = mr_method, values_from = FPR)
 
-alt_wp_results_summary %>%
-  filter(nu == sqrt(0.03), eta == sqrt(0.1)) %>%
-  filter(method %in% c("egger_5e-8", "egger_wa_5e-8", "egger_wx_5e-8", "ivw_5e-8", "cause_1e-3")) %>%
-  ggplot() +
-  # geom_line(aes(x=q, y=stat_ab, color=method)) +
-  geom_col(aes(x=method, y=stat_ab, color=method)) +
-  # ylim(0, 0.2) +
-  facet_wrap(vars(name), nrow=3)
+res_pow_wp_ab <- alt_wp_results_summary %>% dplyr::filter(p_thresh != "5e-6", mr_method != "egger_wa") %>%
+  dplyr::mutate(POW = paste0(stat_ab, " (", round(se_stat_ab, digits=2), ")"), study = paste(name, round(nu, 2), round(eta, 2))) %>%
+  dplyr::select(study, mr_method, POW) %>% tidyr::pivot_wider(names_from = mr_method, values_from = POW)
 
-alt_wp_results_summary %>%
-  filter(nu == sqrt(0.03), eta == sqrt(0.1)) %>%
-  filter(method %in% c("egger_5e-8", "egger_wa_5e-8", "egger_wx_5e-8", "ivw_5e-8", "cause_1e-3")) %>%
-  ggplot() +
-  # geom_line(aes(x=q, y=stat_ab, color=method)) +
-  geom_col(aes(x=method, y=stat_ba, color=method)) +
-  # ylim(0, 0.2) +
-  facet_wrap(vars(name), nrow=3)
+res_fpr_wp_ba <- alt_wp_results_summary %>% dplyr::filter(p_thresh != "5e-6", mr_method != "egger_wa") %>%
+  dplyr::mutate(FPR = paste0(stat_ba, " (", round(se_stat_ba, digits=2), ")"), study = paste(name, round(nu, 2), round(eta, 2))) %>%
+  dplyr::select(study, mr_method, FPR) %>% tidyr::pivot_wider(names_from = mr_method, values_from = FPR)
+
+res_pow_bi_alt <- bi_alt_results_summary %>% dplyr::filter(p_thresh != "5e-6", mr_method != "egger_wa") %>%
+  dplyr::mutate(POW = paste0(stat_both, " (", round(se_stat_both, digits=2), ")"), study = paste(name, round(gamma, 2), round(delta, 2))) %>%
+  dplyr::select(study, mr_method, POW) %>% tidyr::pivot_wider(names_from = mr_method, values_from = POW)
+
+outfile <- "supp_tables_alt.xlsx"
+
+supp_tables <- openxlsx::createWorkbook()
+openxlsx::addWorksheet(supp_tables, "ST10")
+openxlsx::addWorksheet(supp_tables, "ST11")
+openxlsx::addWorksheet(supp_tables, "ST12")
+openxlsx::addWorksheet(supp_tables, "ST13")
+openxlsx::addWorksheet(supp_tables, "ST14")
+openxlsx::addWorksheet(supp_tables, "ST15")
+openxlsx::addWorksheet(supp_tables, "ST16")
+openxlsx::addWorksheet(supp_tables, "ST17")
+openxlsx::writeData(supp_tables, "ST10", sim_settings_alt_np)
+openxlsx::writeData(supp_tables, "ST11", sim_settings_alt_wp)
+openxlsx::writeData(supp_tables, "ST12", sim_settings_bi_alt)
+openxlsx::writeData(supp_tables, "ST13", res_pow_np_ab)
+openxlsx::writeData(supp_tables, "ST14", res_fpr_np_ba)
+openxlsx::writeData(supp_tables, "ST15", res_pow_wp_ab)
+openxlsx::writeData(supp_tables, "ST16", res_fpr_wp_ba)
+openxlsx::writeData(supp_tables, "ST17", res_pow_bi_alt)
+
+
+openxlsx::saveWorkbook(wb = supp_tables, file = outfile, overwrite = TRUE)
 ```

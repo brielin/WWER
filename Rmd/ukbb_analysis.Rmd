@@ -1,27 +1,33 @@
 # Load Packages
 ```{r}
-# install.packages("/gpfs/commons/home/bbrown/ukbb_network/inspre", repos = NULL, type = "source")
-require(inspre)
 require(tidyverse)
 require(foreach)
 require(igraph)
 require(devtools)
 require(egg)
 require(GGally)
-devtools::load_all()
+require(WWER)
 ```
 
-
-# Load summary statistics
 ```{r}
 file_pattern_gencor_male = "/gpfs/commons/projects/UKBB/sumstats/filtered/*.male_filtered.tsv.gz"
 file_pattern_gencor_female = "/gpfs/commons/projects/UKBB/sumstats/filtered/*.female_filtered.tsv.gz"
 save_select_sumstats = "/gpfs/commons/home/bbrown/ukbb_network/saved_rdata/select_sumstats.Rdata"
 save_fit_sumstats = "/gpfs/commons/home/bbrown/ukbb_network/saved_rdata/fit_sumstats.Rdata"
 
-# sumstats <- read_sumstats_neale(file_pattern = file_pattern_gencor_male)
-# save(sumstats, file = save_select_sumstats)
-# rm(sumstats)
+p_thresh = 5e-8
+file_pattern_snp_list = "/gpfs/commons/projects/UKBB/sumstats/clumped/*/all.snps"
+save_snps = "/gpfs/commons/home/bbrown/ukbb_network/saved_rdata/selected_snps_5e-8.Rdata"
+
+save_tce_res = "/gpfs/commons/home/bbrown/ukbb_network/saved_rdata/tce_res_5e-8_5inst.Rdata"
+rg_result_file = "/gpfs/commons/home/bbrown/ukbb_network/saved_rdata/rg_results.Rdata"
+```
+
+# Load summary statistics
+```{r}
+sumstats <- read_sumstats_neale(file_pattern = file_pattern_gencor_male)
+save(sumstats, file = save_select_sumstats)
+rm(sumstats)
 sumstats <- read_sumstats_neale(file_pattern = file_pattern_gencor_female)
 save(sumstats, file = save_fit_sumstats)
 rm(sumstats)
@@ -29,10 +35,6 @@ rm(sumstats)
 
 # Select instruments
 ```{r}
-p_thresh = 5e-6
-file_pattern_snp_list = "/gpfs/commons/projects/UKBB/sumstats/clumped/*/all.snps"
-save_snps = "/gpfs/commons/home/bbrown/ukbb_network/saved_rdata/selected_snps_5e-6.Rdata"
-
 load(save_select_sumstats)
 snps_to_use <- read_snp_list(file_pattern_snp_list)
 selected_snps <- select_snps(sumstats, snps_to_use, p_thresh = p_thresh, verbose = TRUE)
@@ -41,12 +43,10 @@ save(selected_snps, file = save_snps)
 
 # Fit TCE matrix
 ```{r}
-save_tce_res = "/gpfs/commons/home/bbrown/ukbb_network/saved_rdata/tce_res.Rdata"
-
 load(save_fit_sumstats)
 load(save_snps)
 tce_res <- fit_tce(sumstats, selected_snps, mr_method = "egger_w",
-                   min_instruments = 10, verbose = TRUE)
+                   min_instruments = 5, verbose = TRUE)
 save(tce_res, file = save_tce_res)
 ```
 
@@ -69,24 +69,39 @@ pivot_tce <- function(R_tce, SE_tce, N_obs){
   return(plot_data)
 }
 
-save_tce_res = "/gpfs/commons/home/bbrown/ukbb_network/saved_rdata/tce_res.Rdata"
-rg_result_file = "/gpfs/commons/home/bbrown/ukbb_network/saved_rdata/rg_results.Rdata"
-
 load(save_tce_res)
 load(rg_result_file)
+```
 
-tce_filt <- filter_tce(tce_res$R_tce, tce_res$SE_tce, max_R = 1, max_SE = 0.5, max_nan_perc = 0.5)
-R_tce <- tce_filt$R_tce
-SE_tce <- tce_filt$SE_tce
-N_obs <- tce_res$N_obs[rownames(R_tce), rownames(R_tce)]
-phenotypes <- rownames(R_tce)
+```{r}
+# Remove rows that are all NaN.
+# keep_rows_n <- apply(tce_res_new$R_tce, 1, function(x){sum(!is.na(x)) > 1})
+# R_tce_n <- tce_res_new$R_tce[keep_rows_n,]
+# SE_tce_n <- tce_res_new$SE_tce[keep_rows_n,]
+# N_obs_n <- tce_res_new$N_obs[keep_rows_n,]
+
+keep_rows <- apply(tce_res$R_tce, 1, function(x){sum(!is.na(x)) > 1})
+R_tce <- tce_res$R_tce[keep_rows,]
+SE_tce <- tce_res$SE_tce[keep_rows,]
+N_obs <- tce_res$N_obs[keep_rows,]
+row_phenotypes <- rownames(R_tce)
+col_phenotypes <- colnames(R_tce)
 
 N_phenos <- nrow(R_tce)
 data <- pivot_tce(R_tce, SE_tce, N_obs) %>% dplyr::left_join(select(rg_results, -c(starts_with("mf"))), by = c("Exposure" = "phenotype.1", "Outcome" = "phenotype.2"))
 
-rho <- matrix(data$rg, nrow = length(phenotypes))
-diag(rho) <- 1
+rho <- matrix(rg_results$rg, nrow = length(unique(rg_results$phenotype.1)))
+rho[abs(rho) > 1] = 1
 ord_rho <- hclust(as.dist(sqrt(2*(1-abs(rho)))))$order
+all_phenotypes <- rg_results$phenotype.2[1:nrow(rho)]
+ordered_phenotypes <- all_phenotypes[ord_rho]
+
+row_phenotypes <- intersect(ordered_phenotypes, row_phenotypes) # Preserves order of argument 1.
+col_phenotypes <- intersect(ordered_phenotypes, col_phenotypes) # Preserves order of argument 1.
+
+# rho <- matrix(data$rg, nrow = length(phenotypes))
+# rho[abs(rho) > 1] = 1
+# ord_rho <- hclust(as.dist(sqrt(2*(1-abs(rho)))))$order
 
 n_nans = sum(is.na(R_tce))
 perc_nans = n_nans/(N_phenos*N_phenos - N_phenos)
@@ -102,62 +117,141 @@ ggplot(data, aes(x=R_tce)) + geom_density() + xlim(-1, 1)
 data %>% filter(p_fdr < 0.05) %>% ggplot(aes(x=R_tce)) + geom_density() + xlim(-1, 1)
 ```
 
+```{r, fig.height=6, fig.width=9}
+theme_set(theme_gray())
+g1 <- ggplot(data, aes(y=Exposure, x=Outcome)) + geom_tile(aes(fill=rg)) +
+  scale_x_discrete(limits = col_phenotypes, labels = NULL) +
+  scale_y_discrete(limits = rev(row_phenotypes), labels = NULL) +
+  scale_fill_gradient2() +
+  labs(x = NULL, y = NULL, title = "a) Genetic correlation") +
+#  guides(fill = FALSE) +
+  theme(plot.title = element_text(size=10), axis.ticks=element_blank()) + coord_fixed()
+
+g2 <- data %>% mutate(R_tce_fill = if_else(abs(R_tce) > 1, sign(R_tce)*1.0, R_tce)) %>% ggplot(aes(y=Exposure, x=Outcome)) + geom_tile(aes(fill=R_tce_fill)) +
+  scale_x_discrete(limits = col_phenotypes, labels = NULL) +
+  scale_y_discrete(limits = rev(row_phenotypes), labels = NULL) +
+  scale_fill_gradient2(name = "CE") +
+  labs(x = NULL, y = NULL, title = "b) Estimated causal effect") +
+#  guides(fill = FALSE) +
+  theme(plot.title = element_text(size=10), axis.ticks=element_blank()) + coord_fixed()
+
+ggarrange(g1, g2, nrow=2, left = "Exposure", bottom = "Outcome")
+```
+
 ```{r}
-ggplot(data, aes(y=Exposure, x=Outcome)) + geom_tile(aes(fill=rg)) +
-  scale_x_discrete(limits = phenotypes[ord_rho], labels = NULL) +
-  scale_y_discrete(limits = phenotypes[rev(ord_rho)], labels = NULL) +
-  scale_fill_gradient2(limits = c(-1, 1)) +
-#  labs(x = NULL, y = NULL, title = "a) Genetic correlation") +
-#  guides(fill = FALSE) +
-  theme(plot.title = element_text(size=10), axis.ticks=element_blank()) + coord_fixed()
-
-ggplot(data, aes(y=Exposure, x=Outcome)) + geom_tile(aes(fill=R_tce)) +
-  scale_x_discrete(limits = phenotypes[ord_rho], labels = NULL) +
-  scale_y_discrete(limits = phenotypes[rev(ord_rho)], labels = NULL) +
-  scale_fill_gradient2(limits = c(-1, 1)) +
-#  labs(x = NULL, y = NULL, title = "a) Genetic correlation") +
-#  guides(fill = FALSE) +
-  theme(plot.title = element_text(size=10), axis.ticks=element_blank()) + coord_fixed()
-
 tibble("logpv" = c(0:20), "correlation" = map_dbl(exp(-c(0:20)), ~ cor(data$R_tce[data$p_fdr < .x], data$rg[data$p_fdr < .x]))) %>% 
   ggplot(aes(x = logpv, y=correlation)) + geom_line() + scale_x_continuous(trans=c("log1p"))
 ```
 
-```{r}
-load("/gpfs/commons/home/bbrown/ukbb_network/saved_rdata/selected_phenotypes.Rdata")
 
+```{r}
+# I manually edited the list from the preprocessing script to include short descriptions.
+load("/gpfs/commons/home/bbrown/ukbb_network/saved_rdata/selected_phenotypes_sd.Rdata")
+descriptions <- dplyr::select(selected_phenos, phenotype, short_description)
+data <- data %>% dplyr::left_join(descriptions, by = c("Exposure" = "phenotype")) %>% dplyr::left_join(descriptions, by = c("Outcome" = "phenotype"), suffix = c(".1", ".2"))
+```
+
+```{r}
+data %>% group_by(Exposure) %>% mutate(n_sig_eff = sum(p_fdr < 0.05)) %>% distinct(Exposure, short_description.1, n_sig_eff) %>% arrange(desc(n_sig_eff))
+```
+
+```{r}
 # 98, 99, 103, 104, 105, 106, 119, 120, 122, 124 334-335, 400
-imid = selected_phenos$phenotype[c(98, 99, 103, 104, 105, 106, 119, 120, 122, 124, 334, 335, 400)]
+imid = selected_phenos$phenotype[c(98, 99, 103, 104, 105, 106, 124, 334, 335, 400)]
 # 207-233, 235, 237-253
-biomarkers = selected_phenos$phenotype[c(207:233, 235, 237:253)]
+biomarkers = selected_phenos$phenotype[c(208:228, 233:234, 236, 238:254)]
 
-data_bd <- data %>% dplyr::filter(Exposure %in% biomarkers, Outcome %in% imid)
-data_db <- data %>% dplyr::filter(Exposure %in% imid, Outcome %in% biomarkers)
+subset_bio_col = filter(selected_phenos, phenotype %in% biomarkers, phenotype %in% col_phenotypes)
+subset_bio_row = filter(selected_phenos, phenotype %in% biomarkers, phenotype %in% row_phenotypes)
 
-data_bd %>% dplyr::mutate(R_tce = ifelse(SE_tce < 0.5, R_tce, NA)) %>%
-  ggplot(aes(y=Exposure, x=Outcome)) + geom_tile(aes(fill=R_tce)) + scale_fill_gradient2()
+subset_imid_col = filter(selected_phenos, phenotype %in% imid, phenotype %in% col_phenotypes)
+subset_imid_row = filter(selected_phenos, phenotype %in% imid, phenotype %in% row_phenotypes)
 
-data_db %>% dplyr::mutate(R_tce = ifelse(SE_tce < 0.5, R_tce, NA)) %>%
-  ggplot(aes(y=Exposure, x=Outcome)) + geom_tile(aes(fill=R_tce)) + scale_fill_gradient2()
+bio_order = intersect(ordered_phenotypes, biomarkers)
+bio_order = map_int(bio_order, ~ which(.x == subset_bio_col$phenotype))
+sd_order_bio = subset$short_description[bio_order]
 
-data_bd %>% dplyr::mutate(mlogp = -sign(R_tce)*log10(p_val)) %>%
-  ggplot(aes(y=Exposure, x=Outcome)) + geom_tile(aes(fill=mlogp)) + scale_fill_gradient2()
+imid_order_col = intersect(ordered_phenotypes, subset_imid_col$phenotype)
+imid_order_row = intersect(ordered_phenotypes, subset_imid_row$phenotype)
+imid_order_col = map_int(imid_order_col, ~ which(.x == subset_imid_col$phenotype))
+imid_order_row = map_int(imid_order_row, ~ which(.x == subset_imid_row$phenotype))
 
-data_db %>% dplyr::mutate(mlogp = -sign(R_tce)*log10(p_val)) %>%
-  ggplot(aes(y=Exposure, x=Outcome)) + geom_tile(aes(fill=mlogp)) + scale_fill_gradient2()
+sd_order_imid_col = subset_imid_col$short_description[imid_order_col]
+sd_order_imid_row = subset_imid_row$short_description[imid_order_row]
+```
+
+
+```{r, fig.width=14, fig.height=8}
+theme_set(theme_classic())
+
+data_both <- data %>% dplyr::filter(Exposure %in% biomarkers || Outcome %in% imid)
+data_bd <- data %>% dplyr::filter(Exposure %in% biomarkers, Outcome %in% imid) %>% 
+  dplyr::mutate(sig_level = if_else(p_fdr < 0.0005, "3", if_else(p_fdr < 0.005, "2", if_else(p_fdr < 0.05, "1", "0"))))
+data_db <- data %>% dplyr::filter(Exposure %in% imid, Outcome %in% biomarkers) %>% 
+  dplyr::mutate(sig_level = if_else(p_fdr < 0.0005, "3", if_else(p_fdr < 0.005, "2", if_else(p_fdr < 0.05, "1", "0"))))
+
+g1 <- data_bd %>% dplyr::mutate(R_tce = ifelse(SE_tce < 0.5, R_tce, NA)) %>%
+  ggplot(aes(y=short_description.1, x=short_description.2)) + geom_tile(aes(fill=R_tce)) + scale_fill_gradient2(limits = c(-0.4, 0.4)) +
+  geom_point(aes(size = sig_level))+ scale_size_manual(values=c(NA, 0.5, 1.5, 2.5)) +
+  labs(x = NULL, y = NULL, title = "a) Blood traits as exposures, IMID as outcomes") + guides(fill=F, size=F) +
+  scale_y_discrete(limits = sd_order_bio) + scale_x_discrete(limits = sd_order_imid_col) +
+  theme(axis.text.x = element_text(angle = 60, vjust = 1, hjust = 1), axis.line.x = element_blank(), axis.line.y = element_blank())
+
+g2 <- data_db %>% dplyr::mutate(R_tce = ifelse(SE_tce < 0.5, R_tce, NA)) %>%
+  ggplot(aes(y=short_description.1, x=short_description.2)) + geom_tile(aes(fill=R_tce)) + scale_fill_gradient2(limits = c(-0.4, 0.4)) +
+  geom_point(data = data_db[data_db$sig_level != "0",], aes(size = sig_level)) + 
+  scale_size_manual(values=c("1" = 0.5, "2" = 1.5, "3" = 2.5), labels = c("q < 0.05", "q < 0.005", "q < 0.0005")) +
+  labs(x = NULL, y = NULL, title = "b) IMID as exposures, blood traits as outcomes", fill = "CE", size = "Significance") + # guides(fill=F) +
+  scale_y_discrete(limits = sd_order_imid_row) + scale_x_discrete(limits = sd_order_bio) +
+  theme(axis.text.x = element_text(angle = 60, vjust = 1, hjust = 1), axis.line.x = element_blank(), axis.line.y = element_blank())
+
+ggarrange(g1, g2, nrow=1, widths = c(0.9, 1.1), bottom = "Outcome", left = "Exposure")
 ```
 
 
 ```{r}
-data_bd %>% group_by(Exposure) %>% mutate(n_sig_eff = sum(p_fdr < 0.05)) %>% distinct(Exposure, description.1, n_sig_eff) %>% arrange(desc(n_sig_eff))
-data_db %>% group_by(Exposure) %>% mutate(n_sig_eff = sum(p_fdr < 0.05)) %>% distinct(Exposure, description.1, n_sig_eff) %>% arrange(desc(n_sig_eff))
-
-data_bd %>% arrange(p_val)
+data_bd %>% group_by(Exposure) %>% mutate(n_sig_eff = sum(p_fdr < 0.05)) %>% distinct(Exposure, short_description.1, n_sig_eff) %>% arrange(desc(n_sig_eff))
+data_db %>% group_by(Exposure) %>% mutate(n_sig_eff = sum(p_fdr < 0.05)) %>% distinct(Exposure, short_description.1, n_sig_eff) %>% arrange(desc(n_sig_eff))
 ```
 
 
 ```{r}
-sig_bd = data_bd %>% filter(p_fdr < 0.05)
-sig_db = data_db %>% filter(p_fdr < 0.05)
-sig_bd %>% inner_join(sig_db, by = c("Exposure" = "Outcome", "Outcome" = "Exposure")) %>% select(Exposure, Outcome, R_tce.x, SE_tce.x, R_tce.y, SE_tce.y, description.1.x, description.2.x) %>% view()
+sig_bd = data_bd %>% arrange(Exposure, p_fdr) %>% filter(p_fdr < 0.05) %>% 
+  select(Exposure, Outcome, short_description.1, short_description.2, p_fdr, R_tce, SE_tce, rg) %>%
+  rename(SD_Exposure = short_description.1, SD_Outcome = short_description.2, "CE" = R_tce, "SE" = SE_tce)
+  
+sig_db = data_db %>% arrange(Exposure, p_fdr) %>% filter(p_fdr < 0.05) %>%
+  select(Exposure, Outcome, short_description.1, short_description.2, p_fdr, R_tce, SE_tce, rg) %>%
+  rename(SD_Exposure = short_description.1, SD_Outcome = short_description.2, "CE" = R_tce, "SE" = SE_tce)
+
+sig_both <- sig_bd %>% inner_join(sig_db, by = c("Exposure" = "Outcome", "Outcome" = "Exposure")) %>%
+  rename("A" = Exposure, "B" = Outcome, "CE (A to B)" = CE.x, "SE (A to B)" = SE.x, "p_fdr (A to B)" = p_fdr.x,
+         "CE (B to A)" = CE.y, "SE (B to A)" = SE.y, "p_fdr (B to A)" = p_fdr.y, "rg" = rg.y) %>% select(-rg.x)
 ```
+
+```{r}
+has_inst <- unique(data$Exposure)
+st_phenos <- dplyr::select(selected_phenos, phenotype, description, short_description, Neff, mf_rg, mf_rg_se, ci, z0) %>%
+  dplyr::mutate(has_inst = phenotype %in% has_inst)
+st_bt_imid <- rbind(dplyr::filter(st_phenos, phenotype %in% imid), dplyr::filter(st_phenos, phenotype %in% biomarkers))
+
+
+outfile <- "supp_tables_ukbb.xlsx"
+
+supp_tables <- openxlsx::createWorkbook()
+
+openxlsx::addWorksheet(supp_tables, "ST18")
+openxlsx::addWorksheet(supp_tables, "ST19")
+openxlsx::addWorksheet(supp_tables, "ST20")
+openxlsx::addWorksheet(supp_tables, "ST21")
+openxlsx::addWorksheet(supp_tables, "ST22")
+
+
+openxlsx::writeData(supp_tables, "ST18", st_bt_imid)
+openxlsx::writeData(supp_tables, "ST19", sig_bd)
+openxlsx::writeData(supp_tables, "ST20", sig_db)
+openxlsx::writeData(supp_tables, "ST21", st_phenos)
+openxlsx::writeData(supp_tables, "ST22", data)
+
+openxlsx::saveWorkbook(wb = supp_tables, file = outfile, overwrite = TRUE)
+````

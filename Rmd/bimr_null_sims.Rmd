@@ -45,7 +45,8 @@ make_summary_tibble <- function(plot_tibble){
     ungroup() %>%
     distinct(name, method, mr_method, p_thresh, Na, Nb, M, ha, hb, hu, rg, nu, eta, gamma, delta, q, r, s, Rab, Rba,
              stat_ab, stat_ba, se_stat_ab, se_stat_ba, mae_ab, mae_ba, se_mae_ab, se_mae_ba,
-             Rab_hat, Rba_hat, Sab_hat, Sba_hat, runtime)
+             Rab_hat, Rba_hat, Sab_hat, Sba_hat, runtime) %>%
+    mutate(method = if_else(method == "egger_wf_5e-8", "aaa_egger_wf_5e-8", method))
   return(summary_tibble)
 }
 
@@ -109,7 +110,7 @@ sim_lcv_4 = tibble(
 sim_settings_lcv <- dplyr::bind_rows(sim_lcv_1, sim_lcv_2, sim_lcv_3, sim_lcv_4)
 
 sim_settings_lcv_data <- sim_settings_lcv %>%
-  dplyr::rowwise() %>% dplyr::mutate(vars=list(h2_to_s2(M, ha, hb, hu, nu, eta, gamma, delta, p, q, r, s))) %>%
+  dplyr::rowwise() %>% dplyr::mutate(vars=list(WWER:::h2_to_s2(M, ha, hb, hu, nu, eta, gamma, delta, p, q, r, s))) %>%
   dplyr::mutate(sa = vars$sa, sb= vars$sb, su = vars$su, Ma = M*p*r, Mb = M*p*s, Mu = M*p*q) %>% dplyr::select(-vars)
 ```
 
@@ -174,9 +175,11 @@ sim_cause_4 = tibble(
   p = p_cause, q = q_cause, r = r_cause, s = r_cause, af_ref_file = af_ref_file)
 
 
-sim_settings_cause <- dplyr::bind_rows(sim_cause_1, sim_cause_2, sim_cause_3,  sim_cause_4) # %>%
-  # dplyr::rowwise() %>% dplyr::mutate(vars=list(h2_to_s2(M, ha, hb, hu, nu, eta, gamma, delta, p, q, r, s))) %>%
-  # dplyr::mutate(sa = vars$sa, sb= vars$sb, su = vars$su, Ma = M*p*r, Mb = M*p*s, Mu = M*p*q) %>% dplyr::select(-vars)
+sim_settings_cause <- dplyr::bind_rows(sim_cause_1, sim_cause_2, sim_cause_3,  sim_cause_4)
+
+sim_settings_cause_data <- sim_settings_cause %>%
+  dplyr::rowwise() %>% dplyr::mutate(vars=list(WWER:::h2_to_s2(M, ha, hb, hu, nu, eta, gamma, delta, p, q, r, s))) %>%
+  dplyr::mutate(sa = vars$sa, sb= vars$sb, su = vars$su, Ma = M*p*r, Mb = M*p*s, Mu = M*p*q) %>% dplyr::select(-vars)
 ```
 
 ```{r}
@@ -193,6 +196,8 @@ sjob_cause <- rslurm::slurm_apply(
 h = 0.3
 Na = 100000
 Nb = 100000
+af_ref_file <- "/gpfs/commons/projects/UKBB/sumstats/ldsc_results/eur_w_ld_chr/19.l2.ldscore.gz"
+n_iter = 100
 nu_asym = c(sqrt(0.1), sqrt(0.3), sqrt(0.3))
 eta_asym = c(sqrt(0.3), sqrt(0.1), sqrt(0.3))
 nu_sym = c(sqrt(0.1), sqrt(0.3))
@@ -251,7 +256,7 @@ sim_hhh <- tibble(
 )
 
 M_hhl = 2*M_h + 1*M_l
-p_hhl = M_hlh/M_new
+p_hhl = M_hhl/M_new
 q_hhl = M_h/M_hhl
 r_hhl = M_h/M_hhl
 s_hhl = M_l/M_hhl
@@ -301,6 +306,8 @@ nu_sym = c(sqrt(0.1), sqrt(0.3))
 eta_sym = c(sqrt(0.3), sqrt(0.3))
 M_l = 500
 M_h = 2000
+af_ref_file <- "/gpfs/commons/projects/UKBB/sumstats/ldsc_results/eur_w_ld_chr/19.l2.ldscore.gz"
+n_iter = 100
 
 M_lhh = 2*M_h + 1*M_l
 p_lhh = M_lhh/M_new
@@ -352,7 +359,7 @@ sim_hhh <- tibble(
 )
 
 M_hhl = 2*M_h + 1*M_l
-p_hhl = M_hlh/M_new
+p_hhl = M_hhl/M_new
 q_hhl = M_h/M_hhl
 r_hhl = M_h/M_hhl
 s_hhl = M_l/M_hhl
@@ -400,6 +407,8 @@ nu_sym = c(sqrt(0.1), sqrt(0.3))
 eta_sym = c(sqrt(0.3), sqrt(0.3))
 M_l = 500
 M_h = 2000
+af_ref_file <- "/gpfs/commons/projects/UKBB/sumstats/ldsc_results/eur_w_ld_chr/19.l2.ldscore.gz"
+n_iter = 100
 
 M_lhh = 2*M_h + 1*M_l
 p_lhh = M_lhh/M_new
@@ -451,7 +460,7 @@ sim_hhh <- tibble(
 )
 
 M_hhl = 2*M_h + 1*M_l
-p_hhl = M_hlh/M_new
+p_hhl = M_hhl/M_new
 q_hhl = M_h/M_hhl
 r_hhl = M_h/M_hhl
 s_hhl = M_l/M_hhl
@@ -493,7 +502,9 @@ sjob_polyg_Na_small <- rslurm::slurm_apply(
 ```{r}
 sjob_lcv <- rslurm::slurm_job(jobname = "bimr_lcv", nodes = nrow(sim_settings_lcv))
 sjob_cause <- rslurm::slurm_job(jobname = "bimr_cause", nodes = nrow(sim_settings_cause))
-sjob_polyg <- rslurm::slurm_job(jobname = "bimr_polyg", nodes = nrow(sim_settings_polyg))
+sjob_polyg_equal <- rslurm::slurm_job(jobname = "bimr_polyg_equal", nodes = nrow(sim_settings_polyg_equal))
+sjob_polyg_Na_small <- rslurm::slurm_job(jobname = "bimr_polyg_Na_small", nodes = nrow(sim_settings_polyg_Na_small))
+sjob_polyg_Nb_small <- rslurm::slurm_job(jobname = "bimr_polyg_Nb_small", nodes = nrow(sim_settings_polyg_Nb_small))
 ```
 
 ```{r}
@@ -515,12 +526,13 @@ polyg_all_summary <- rbind(polyg_equal_results_summary, polyg_Na_small_results_s
 ```
 
 
-```{r, fig.height = 10, fig.width = 12}
+```{r, fig.height = 10, fig.width = 12.5}
 theme_set(theme_classic())
 
-show_methods = c("egger_5e-8", "egger_wf_5e-8", "egger_s_5e-8", "cause_1e-3", "ivw_5e-8", "mr_mix_5e-8", "mr_presso_5e-8")
+# show_methods = c("egger_5e-8", "ivw_5e-8", "mbe_5e-8", "aps_5e-8", "raps_5e-8", "mr_mix_5e-8", "median_5e-8",)
+show_methods = c("egger_5e-8", "aaa_egger_wf_5e-8", "egger_s_5e-8", "cause_1e-3", "ivw_5e-8", "mr_mix_5e-8", "mr_presso_5e-8", "mbe_5e-8")
 # show_methods = c("egger_5e-8", "egger_wa_5e-8", "egger_wf_5e-8", "egger_s_5e-8")
-show_labels = c("test")
+show_labels = c("WWER", "CAUSE", "Egger", "Steiger", "IVW", "MBE", "MR Mix", "MR PRESSO")
 
 g1 <- lcv_results_summary %>% 
   filter(method %in% show_methods) %>% 
@@ -529,7 +541,7 @@ g1 <- lcv_results_summary %>%
   geom_line(aes(x=rg, y=stat_ab, color=method)) +
   geom_errorbar(aes(ymin = stat_ab - 1.96*se_stat_ab, ymax = stat_ab + 1.96*se_stat_ab, x = rg), width = 0.025) +
   facet_wrap(vars(name), nrow=1) + 
-  scale_color_brewer(labels = c("CAUSE", "Egger", "Steiger", "WWER", "IVW", "MR Mix", "MR PRESSO"), palette = "Dark2") +
+  scale_color_brewer(labels = show_labels, palette = "Dark2") +
   labs(x = NULL, title = "a) Simulations under LCV model.", y = "FPR, A to B") + guides(color = FALSE)
 
 g2 <- lcv_results_summary %>%
@@ -539,7 +551,7 @@ g2 <- lcv_results_summary %>%
   geom_line(aes(x=rg, y=stat_ba, color=method)) +
   geom_errorbar(aes(ymin = stat_ba - 1.96*se_stat_ba, ymax = stat_ba + 1.96*se_stat_ba, x = rg), width = 0.025) +
   facet_wrap(vars(name), nrow=1) +
-  scale_color_brewer(labels = c("CAUSE", "Egger", "Steiger", "WWER", "IVW", "MR Mix", "MR PRESSO"), palette = "Dark2", name = "Method") +
+  scale_color_brewer(labels = show_labels, palette = "Dark2", name = "Method") +
   labs(x = "Genetic correlation", title = NULL, y = "FPR, B to A") + guides(color = FALSE)
 
 g3 <- cause_results_summary %>% 
@@ -549,8 +561,8 @@ g3 <- cause_results_summary %>%
   geom_line(aes(x=q, y=stat_ab, color=method)) +
   geom_errorbar(aes(ymin = stat_ab - 1.96*se_stat_ab, ymax = stat_ab + 1.96*se_stat_ab, x = q), width = 0.015) +
   facet_wrap(vars(name), nrow=1) + 
-  scale_color_brewer(labels = c("CAUSE", "Egger", "Steiger", "WWER", "IVW", "MR Mix", "MR PRESSO"), palette = "Dark2") +
-  labs(x = NULL, title = "b) Simulations under CAUSE model.", y = "FPR, A to B")
+  scale_color_brewer(labels = show_labels, palette = "Dark2") +
+  labs(x = NULL, title = "b) Simulations under CAUSE model.", y = "FPR, A to B", color = "Method")
 
 g4 <- cause_results_summary %>% 
   filter(method %in% show_methods) %>% 
@@ -559,7 +571,7 @@ g4 <- cause_results_summary %>%
   geom_line(aes(x=q, y=stat_ba, color=method)) +
   geom_errorbar(aes(ymin = stat_ba - 1.96*se_stat_ba, ymax = stat_ba + 1.96*se_stat_ba, x = q), width = 0.015) +
   facet_wrap(vars(name), nrow=1) +
-  scale_color_brewer(labels = c("CAUSE", "Egger", "Steiger", "WWER", "IVW", "MR Mix", "MR PRESSO"), palette = "Dark2") +
+  scale_color_brewer(labels = show_labels, palette = "Dark2") +
   ylim(0, 1) + 
   labs(x = "Proportion of shared variants", y = "FPR, B to A") + guides(color = FALSE)
 
@@ -568,7 +580,7 @@ g5 <- polyg_all_summary %>%  filter(grepl("PolyG: high A, high B", name), nu == 
   ggplot() + facet_wrap(vars(name), nrow=1) +
   geom_col(aes(x=method, y=stat_ab, fill=method), position = "dodge") + 
   geom_errorbar(aes(ymin = stat_ab - 1.96*se_stat_ab, ymax = stat_ab + 1.96*se_stat_ab, x=method), width = 0.15) +
-  scale_fill_brewer(labels = c("CAUSE", "Egger", "Steiger", "WWER", "IVW", "MR Mix", "MR PRESSO"), palette = "Dark2") +
+  scale_fill_brewer(labels = show_labels, palette = "Dark2") +
   ylim(0, 1) +
   theme(axis.text.x=element_blank(), axis.ticks.x=element_blank()) +
   labs(x = NULL, title = "c) Simulations modeling polygenicity of U.", y = "FPR, A to B") + guides(fill = FALSE)
@@ -578,9 +590,9 @@ g6 <- polyg_all_summary %>%  filter(grepl("PolyG: high A, high B", name), nu == 
   ggplot() + facet_wrap(vars(name), nrow=1) +
   geom_col(aes(x = method, y=stat_ba, fill=method), position = "dodge") + 
   geom_errorbar(aes(ymin = stat_ba - 1.96*se_stat_ba, ymax = stat_ba + 1.96*se_stat_ba, x = method), width = 0.15) +
-  scale_fill_brewer(labels = c("CAUSE", "Egger", "Steiger", "WWER", "IVW", "MR Mix", "MR PRESSO"), palette = "Dark2") +
-  ylim(0, 1) + 
-  theme(axis.text.x=element_blank(), axis.ticks.x=element_blank()) +
+  scale_fill_brewer(labels = show_labels, palette = "Dark2") +
+  scale_x_discrete(labels = show_labels) + theme(axis.text.x=element_text(color = "black", angle=30, vjust=.8, hjust=0.8)) + 
+  ylim(0, 1) +
   labs(x = "Method", y = "FPR, B to A") + guides(fill = FALSE)
 
 
@@ -589,9 +601,10 @@ ggarrange(g1, g2, g3, g4, g5, g6, nrow=6)
 
 
 
-```{r, fig.width=8}
-show_methods = c("egger_5e-8", "egger_wa_5e-8", "egger_wf_5e-8", "egger_s_5e-8", "cause_1e-3", "ivw_5e-8", "mr_mix_5e-8", "mr_presso_5e-8")
-# show_methods = c("egger_5e-8", "egger_wa_5e-8", "egger_wf_5e-8", "egger_s_5e-8")
+```{r, fig.width=10, fig.height=10}
+show_methods = c("egger_5e-8", "egger_wf_5e-8", "egger_s_5e-8", "cause_1e-3", "mr_mix_5e-8", "mbe_5e-8")
+# show_methods = c("egger_5e-8", "egger_wf_5e-8", "egger_s_5e-8")
+# show_methods = c("egger_wf_5e-8", "egger_5e-8", "median_5e-8", "mbe_5e-8", "raps_5e-8")
 
 polyg_all_summary %>% 
   filter(nu == sqrt(0.3), eta == sqrt(0.3)) %>%
@@ -599,6 +612,7 @@ polyg_all_summary %>%
   ggplot() + 
   # geom_line(aes(x=q, y=stat_ab, color=method)) + 
   geom_col(aes(x=method, y=stat_ab, color=method)) +
+  geom_errorbar(aes(ymin = stat_ab - 1.96*se_stat_ab, ymax = stat_ab + 1.96*se_stat_ab, x=method), width = 0.15) +
   ylim(0, 1) +
   facet_wrap(vars(name), nrow=6)
 
@@ -608,6 +622,7 @@ polyg_all_summary %>%
   ggplot() + 
   # geom_line(aes(x=q, y=stat_ab, color=method)) + 
   geom_col(aes(x=method, y=stat_ba, color=method)) +
+  geom_errorbar(aes(ymin = stat_ba - 1.96*se_stat_ba, ymax = stat_ba + 1.96*se_stat_ba, x=method), width = 0.15) +
   ylim(0, 1) +
   facet_wrap(vars(name), nrow=6)
 
@@ -617,6 +632,7 @@ polyg_all_summary %>%
   ggplot() + 
   # geom_line(aes(x=q, y=stat_ab, color=method)) + 
   geom_col(aes(x=method, y=stat_ab, color=method)) +
+  geom_errorbar(aes(ymin = stat_ab - 1.96*se_stat_ab, ymax = stat_ab + 1.96*se_stat_ab, x=method), width = 0.15) +
   ylim(0, 1) +
   facet_wrap(vars(name), nrow=6)
 
@@ -626,6 +642,7 @@ polyg_all_summary %>%
   ggplot() + 
   # geom_line(aes(x=q, y=stat_ab, color=method)) + 
   geom_col(aes(x=method, y=stat_ba, color=method)) +
+  geom_errorbar(aes(ymin = stat_ba - 1.96*se_stat_ba, ymax = stat_ba + 1.96*se_stat_ba, x=method), width = 0.15) +
   ylim(0, 1) +
   facet_wrap(vars(name), nrow=6)
 
@@ -635,6 +652,7 @@ polyg_all_summary %>%
   ggplot() + 
   # geom_line(aes(x=q, y=stat_ab, color=method)) + 
   geom_col(aes(x=method, y=stat_ab, color=method)) +
+  geom_errorbar(aes(ymin = stat_ab - 1.96*se_stat_ab, ymax = stat_ab + 1.96*se_stat_ab, x=method), width = 0.15) +
   ylim(0, 1) +
   facet_wrap(vars(name), nrow=3)
 
@@ -644,22 +662,134 @@ polyg_all_summary %>%
   ggplot() + 
   # geom_line(aes(x=q, y=stat_ab, color=method)) + 
   geom_col(aes(x=method, y=stat_ba, color=method)) +
+  geom_errorbar(aes(ymin = stat_ba - 1.96*se_stat_ba, ymax = stat_ba + 1.96*se_stat_ba, x=method), width = 0.15) +
   ylim(0, 1) +
   facet_wrap(vars(name), nrow=3)
 ```
 
+
+## Lets make some supp tables
+```{r}
+sim_settings_polyg <- rbind(sim_settings_polyg_equal, sim_settings_polyg_Na_small, sim_settings_polyg_Nb_small)
+
+res_fpr_lcv_ab <- lcv_results_summary %>% dplyr::filter(p_thresh != "5e-6", mr_method != "egger_wa") %>%
+  dplyr::mutate(FPR = paste0(stat_ab, " (", round(se_stat_ab, digits=2), ")"), study = paste(name, round(nu, 2), round(eta, 2))) %>%
+  dplyr::select(study, mr_method, FPR) %>% tidyr::pivot_wider(names_from = mr_method, values_from = FPR)
+
+res_fpr_lcv_ba <- lcv_results_summary %>% dplyr::filter(p_thresh != "5e-6", mr_method != "egger_wa") %>%
+  dplyr::mutate(FPR = paste0(stat_ba, " (", round(se_stat_ba, digits=2), ")"), study = paste(name, round(nu, 2), round(eta, 2))) %>%
+  dplyr::select(study, mr_method, FPR) %>% tidyr::pivot_wider(names_from = mr_method, values_from = FPR)
+
+res_fpr_cause_ab <- cause_results_summary %>% dplyr::filter(p_thresh != "5e-6") %>%
+  dplyr::mutate(FPR = paste0(stat_ab, " (", round(se_stat_ab, digits=2), ")"), study = paste(name, round(q, 2))) %>%
+  dplyr::select(study, mr_method, FPR) %>% tidyr::pivot_wider(names_from = mr_method, values_from = FPR)
+
+res_fpr_cause_ba <- cause_results_summary %>% dplyr::filter(p_thresh != "5e-6") %>%
+  dplyr::mutate(FPR = paste0(stat_ba, " (", round(se_stat_ba, digits=2), ")"), study = paste(name, round(q, 2))) %>%
+  dplyr::select(study, mr_method, FPR) %>% tidyr::pivot_wider(names_from = mr_method, values_from = FPR)
+
+res_fpr_polyg_ab <- polyg_all_summary %>% dplyr::filter(p_thresh != "5e-6") %>%
+  dplyr::mutate(FPR = paste0(stat_ab, " (", round(se_stat_ab, digits=2), ")"), study = paste(name, round(nu, 2), round(eta, 2))) %>%
+  dplyr::select(study, mr_method, FPR) %>% tidyr::pivot_wider(names_from = mr_method, values_from = FPR)
+
+res_fpr_polyg_ba <- polyg_all_summary %>% dplyr::filter(p_thresh != "5e-6") %>%
+  dplyr::mutate(FPR = paste0(stat_ba, " (", round(se_stat_ba, digits=2), ")"), study = paste(name, round(nu, 2), round(eta, 2))) %>%
+  dplyr::select(study, mr_method, FPR) %>% tidyr::pivot_wider(names_from = mr_method, values_from = FPR)
+
+res_mae_lcv_ab <- lcv_results_summary %>% dplyr::filter(p_thresh != "5e-6", mr_method != "egger_wa") %>%
+  dplyr::mutate(FPR = paste0(mae_ab, " (", round(se_mae_ab, digits=2), ")"), study = paste(name, round(nu, 2), round(eta, 2))) %>%
+  dplyr::select(study, mr_method, FPR) %>% tidyr::pivot_wider(names_from = mr_method, values_from = FPR)
+
+res_mae_lcv_ba <- lcv_results_summary %>% dplyr::filter(p_thresh != "5e-6", mr_method != "egger_wa") %>%
+  dplyr::mutate(FPR = paste0(mae_ba, " (", round(se_mae_ba, digits=2), ")"), study = paste(name, round(nu, 2), round(eta, 2))) %>%
+  dplyr::select(study, mr_method, FPR) %>% tidyr::pivot_wider(names_from = mr_method, values_from = FPR)
+
+res_mae_cause_ab <- cause_results_summary %>% dplyr::filter(p_thresh != "5e-6") %>%
+  dplyr::mutate(FPR = paste0(mae_ab, " (", round(se_mae_ab, digits=2), ")"), study = paste(name, round(q, 2))) %>%
+  dplyr::select(study, mr_method, FPR) %>% tidyr::pivot_wider(names_from = mr_method, values_from = FPR)
+
+res_mae_cause_ba <- cause_results_summary %>% dplyr::filter(p_thresh != "5e-6") %>%
+  dplyr::mutate(FPR = paste0(mae_ba, " (", round(se_mae_ba, digits=2), ")"), study = paste(name, round(q, 2))) %>%
+  dplyr::select(study, mr_method, FPR) %>% tidyr::pivot_wider(names_from = mr_method, values_from = FPR)
+
+res_mae_polyg_ab <- polyg_all_summary %>% dplyr::filter(p_thresh != "5e-6") %>%
+  dplyr::mutate(FPR = paste0(mae_ab, " (", round(se_mae_ab, digits=2), ")"), study = paste(name, round(nu, 2), round(eta, 2))) %>%
+  dplyr::select(study, mr_method, FPR) %>% tidyr::pivot_wider(names_from = mr_method, values_from = FPR)
+
+res_mae_polyg_ba <- polyg_all_summary %>% dplyr::filter(p_thresh != "5e-6") %>%
+  dplyr::mutate(FPR = paste0(mae_ba, " (", round(se_mae_ba, digits=2), ")"), study = paste(name, round(nu, 2), round(eta, 2))) %>%
+  dplyr::select(study, mr_method, FPR) %>% tidyr::pivot_wider(names_from = mr_method, values_from = FPR)
+
+st4 <- dplyr::left_join(res_fpr_lcv_ab, res_mae_lcv_ab, by = "study", suffix = c("_FPR", "_MAE"))
+st5 <- dplyr::left_join(res_fpr_lcv_ba, res_mae_lcv_ba, by = "study", suffix = c("_FPR", "_MAE"))
+st6 <- dplyr::left_join(res_fpr_cause_ab, res_mae_cause_ab, by = "study", suffix = c("_FPR", "_MAE"))
+st7 <- dplyr::left_join(res_fpr_cause_ba, res_mae_cause_ba, by = "study", suffix = c("_FPR", "_MAE"))
+st8 <- dplyr::left_join(res_fpr_polyg_ab, res_mae_polyg_ab, by = "study", suffix = c("_FPR", "_MAE"))
+st9 <- dplyr::left_join(res_fpr_polyg_ba, res_mae_polyg_ba, by = "study", suffix = c("_FPR", "_MAE"))
+
+outfile <- "supp_tables_null.xlsx"
+
+supp_tables <- openxlsx::createWorkbook()
+openxlsx::addWorksheet(supp_tables, "ST1")
+openxlsx::addWorksheet(supp_tables, "ST2")
+openxlsx::addWorksheet(supp_tables, "ST3")
+openxlsx::addWorksheet(supp_tables, "ST4")
+openxlsx::addWorksheet(supp_tables, "ST5")
+openxlsx::addWorksheet(supp_tables, "ST6")
+openxlsx::addWorksheet(supp_tables, "ST7")
+openxlsx::addWorksheet(supp_tables, "ST8")
+openxlsx::addWorksheet(supp_tables, "ST9")
+
+openxlsx::writeData(supp_tables, "ST1", sim_settings_lcv)
+openxlsx::writeData(supp_tables, "ST2", sim_settings_cause)
+openxlsx::writeData(supp_tables, "ST3", sim_settings_polyg)
+openxlsx::writeData(supp_tables, "ST4", st4)
+openxlsx::writeData(supp_tables, "ST5", st5)
+openxlsx::writeData(supp_tables, "ST6", st6)
+openxlsx::writeData(supp_tables, "ST7", st7)
+openxlsx::writeData(supp_tables, "ST8", st8)
+openxlsx::writeData(supp_tables, "ST9", st9)
+
+openxlsx::saveWorkbook(wb = supp_tables, file = outfile, overwrite = TRUE)
+```
+
+# Summary table
+```{r}
+# TODO(brielin): Add < 0.05 WITH SEs on both 0.05 and 0.2
+all_results <- dplyr::bind_rows(lcv_results_summary, cause_results_summary, polyg_all_summary)
+
+long_results <- all_results %>% dplyr::filter(p_thresh != "5e-6") %>%
+  mutate(category = paste0(name, nu, eta, q), fpr_se_ab = stat_ab - 1.96*se_stat_ab, fpr_se_ba = stat_ba - 1.96*se_stat_ba) %>%
+  dplyr::select(mr_method, category, fpr_se_ab, fpr_se_ba, runtime) %>%
+  tidyr::pivot_longer(cols = c("fpr_se_ab", "fpr_se_ba"), names_to = "direction", values_to = "fpr_se") %>%
+  dplyr::mutate(cat = paste0(category, direction))
+
+long_results_mae <- all_results %>% dplyr::filter(p_thresh != "5e-6") %>%
+  mutate(category = paste0(name, nu, eta, q)) %>%
+  dplyr::select(mr_method, category, mae_ab, mae_ba) %>%
+  tidyr::pivot_longer(cols = c("mae_ab", "mae_ba"), names_to = "direction", values_to = "mae") %>%
+  dplyr::mutate(cat = paste0(category, direction))
+
+long_results$mae <- long_results_mae$mae
+
+result_summary_table <- long_results %>% group_by(cat) %>% mutate(rank_fpr = rank(fpr_se), rank_mae = rank(mae), perc5 = fpr_se < 0.05, perc20 = fpr_se < 0.2) %>%
+  group_by(mr_method) %>% mutate(mean_fprr = round(mean(rank_fpr), 3), mean_maer = round(mean(rank_mae), 3), mean_perc5 = round(mean(perc5), 3), mean_perc20 = round(mean(perc20), 3), mean_runtime = round(mean(runtime),3)) %>%
+  distinct(mr_method, mean_fprr, mean_maer, mean_perc5, mean_perc20, mean_runtime) %>% arrange(desc(mean_perc20))
+
+knitr::kable(result_summary_table, format = "latex", booktabs = T)
+```
 
 ## Code to generate panels in Figure 1.
 ```{r, fig.width=8, fig.height=8}
 af_ref_file <- "/gpfs/commons/projects/UKBB/sumstats/ldsc_results/eur_w_ld_chr/19.l2.ldscore.gz"
 theme_set(theme_classic())
 
-fig_ds_null <- generate_sumstats_glcm(
+fig_ds_null <- generate_sumstats_bimr(
   Na = 50000, Nb = 50000, M = 25000, ha = 0.3, hb = 0.3, hu = 0.3, 
   nu = sqrt(0.3), eta = sqrt(0.3), gamma = 0, delta = 0,
   p = 0.1, q = 0.33, r = 0.33, s=0.33, af_ref_file = af_ref_file)
 
-fig_ds_alt <- generate_sumstats_glcm(
+fig_ds_alt <- generate_sumstats_bimr(
   Na = 50000, Nb = 50000, M = 25000, ha = 0.3, hb = 0.3, hu = 0.3, 
   nu = 0, eta = 0, gamma = sqrt(0.1), delta = 0,
   p = 0.1, q = 0.2, r = 0.4, s=0.4, af_ref_file = af_ref_file)
@@ -668,7 +798,7 @@ sumstats1 <- fig_ds_null$sumstats_1
 sumstats2 <- fig_ds_null$sumstats_2
 
 plot_data_1 <- tibble(
-  "beta_A" = sumstats1$beta$A, "beta_B" = sumstats1$beta$B,
+  "beta_A" = fig_ds_null$beta$A, "beta_B" = fig_ds_null$beta$B,
   "beta_hat_A" = sumstats1$beta_hat$A, "beta_hat_B" = sumstats1$beta_hat$B,
   "se_hat_A" = sumstats1$se_hat$A, "se_hat_B" = sumstats1$se_hat$B,
   "ZA" = fig_ds_null$Z$A, "ZB" = fig_ds_null$Z$B, "ZU" = fig_ds_null$Z$U) %>%
@@ -705,7 +835,7 @@ sumstats2 <- fig_ds_alt$sumstats_2
 
 
 plot_data_1 <- tibble(
-  "beta_A" = sumstats1$beta$A, "beta_B" = sumstats1$beta$B,
+  "beta_A" = fig_ds_alt$beta$A, "beta_B" = fig_ds_alt$beta$B,
   "beta_hat_A" = sumstats1$beta_hat$A, "beta_hat_B" = sumstats1$beta_hat$B,
   "se_hat_A" = sumstats1$se_hat$A, "se_hat_B" = sumstats1$se_hat$B,
   "ZA" = fig_ds_alt$Z$A, "ZB" = fig_ds_alt$Z$B, "ZU" = fig_ds_alt$Z$U) %>%

@@ -25,3 +25,5 @@ Suggests:
     MRMix,
     cause
 RoxygenNote: 7.1.1
+URL: https://github.com/brielin/WWER
+BugReports: https://github.com/brielin/WWER/issues

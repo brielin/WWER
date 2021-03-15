@@ -260,3 +260,49 @@ fit_tce <- function(sumstats, selected_snps, mr_method = "egger_w",
   return(list("R_tce" = as.matrix(R_tce), "SE_tce" = as.matrix(SE_tce),
               "N_obs" = as.matrix(N_obs), "p_val" = as.matrix(p_val)))
 }
+
+
+#' Helper function to do basic filtering of the TCE matrix.
+#'
+#' Large values of R, entries with a high SE, and row/columns with many nans
+#' can be removed.
+#'
+#' @param R_tce Matrix or data.frame. Estimates of TCE.
+#' @param SE_tce Matrix or data.frame. Standard errors of the entries in R_tce.
+#' @param max_R Float. Set all entries where `abs(R_tce) > max_R` to `NA`.
+#' @param max_SE Float. Set all entries whwere `SE > max_SE` tp `NA`.
+#' @param max_nan_perc Float. Remove columns and rows that are more than
+#'   `max_nan_perc` NAs.
+#' @export
+filter_tce <- function(R_tce, SE_tce, max_R = 1, max_SE = 0.5, max_nan_perc = 0.5) {
+  R_tce[is.nan(SE_tce)] <- NA
+  SE_tce[is.nan(SE_tce)] <- NA
+
+  R_too_large <- abs(R_tce) > max_R
+  R_tce[R_too_large] <- NA
+  SE_tce[R_too_large] <- NA
+  SE_too_large <- SE_tce > max_SE
+  R_tce[SE_too_large] <- NA
+  SE_tce[SE_too_large] <- NA
+
+  row_nan_perc <- rowMeans(is.na(R_tce))
+  col_nan_perc <- colMeans(is.na(R_tce))
+  max_row_nan = max(row_nan_perc)
+  max_col_nan = max(col_nan_perc)
+  while((max_row_nan > max_nan_perc) | (max_col_nan > max_nan_perc)){
+    if(max_row_nan >= max_col_nan){
+      which_max_row_nan <- which.max(row_nan_perc)
+      R_tce <- R_tce[-which_max_row_nan, -which_max_row_nan]
+      SE_tce <- SE_tce[-which_max_row_nan, -which_max_row_nan]
+    } else{
+      which_max_col_nan <- which.max(col_nan_perc)
+      R_tce <- R_tce[-which_max_col_nan, -which_max_col_nan]
+      SE_tce <- SE_tce[-which_max_col_nan, -which_max_col_nan]
+    }
+    row_nan_perc <- rowMeans(is.na(R_tce))
+    col_nan_perc <- colMeans(is.na(R_tce))
+    max_row_nan = max(row_nan_perc)
+    max_col_nan = max(col_nan_perc)
+  }
+  return(list("R_tce" = R_tce, "SE_tce" = SE_tce))
+}
