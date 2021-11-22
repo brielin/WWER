@@ -7,6 +7,8 @@ require(devtools)
 require(egg)
 require(GGally)
 require(WWER)
+require(rslurm)
+require(ggupset)
 ```
 
 ```{r}
@@ -123,7 +125,7 @@ g1 <- ggplot(data, aes(y=Exposure, x=Outcome)) + geom_tile(aes(fill=rg)) +
   scale_x_discrete(limits = col_phenotypes, labels = NULL) +
   scale_y_discrete(limits = rev(row_phenotypes), labels = NULL) +
   scale_fill_gradient2() +
-  labs(x = NULL, y = NULL, title = "a) Genetic correlation") +
+  labs(x = NULL, y = NULL, title = "A) Genetic correlation") +
 #  guides(fill = FALSE) +
   theme(plot.title = element_text(size=10), axis.ticks=element_blank()) + coord_fixed()
 
@@ -131,11 +133,12 @@ g2 <- data %>% mutate(R_tce_fill = if_else(abs(R_tce) > 1, sign(R_tce)*1.0, R_tc
   scale_x_discrete(limits = col_phenotypes, labels = NULL) +
   scale_y_discrete(limits = rev(row_phenotypes), labels = NULL) +
   scale_fill_gradient2(name = "CE") +
-  labs(x = NULL, y = NULL, title = "b) Estimated causal effect") +
+  labs(x = NULL, y = NULL, title = "B) Estimated causal effect") +
 #  guides(fill = FALSE) +
   theme(plot.title = element_text(size=10), axis.ticks=element_blank()) + coord_fixed()
 
-ggarrange(g1, g2, nrow=2, left = "Exposure", bottom = "Outcome")
+plot = ggarrange(g1, g2, nrow=2, left = "Exposure", bottom = "Outcome")
+ggsave("../Figures/wwer_fig5.pdf", device = "pdf", plot = plot, dpi = 300)
 ```
 
 ```{r}
@@ -169,7 +172,7 @@ subset_imid_row = filter(selected_phenos, phenotype %in% imid, phenotype %in% ro
 
 bio_order = intersect(ordered_phenotypes, biomarkers)
 bio_order = map_int(bio_order, ~ which(.x == subset_bio_col$phenotype))
-sd_order_bio = subset$short_description[bio_order]
+sd_order_bio = subset_bio_col$short_description[bio_order]
 
 imid_order_col = intersect(ordered_phenotypes, subset_imid_col$phenotype)
 imid_order_row = intersect(ordered_phenotypes, subset_imid_row$phenotype)
@@ -193,7 +196,7 @@ data_db <- data %>% dplyr::filter(Exposure %in% imid, Outcome %in% biomarkers) %
 g1 <- data_bd %>% dplyr::mutate(R_tce = ifelse(SE_tce < 0.5, R_tce, NA)) %>%
   ggplot(aes(y=short_description.1, x=short_description.2)) + geom_tile(aes(fill=R_tce)) + scale_fill_gradient2(limits = c(-0.4, 0.4)) +
   geom_point(aes(size = sig_level))+ scale_size_manual(values=c(NA, 0.5, 1.5, 2.5)) +
-  labs(x = NULL, y = NULL, title = "a) Blood traits as exposures, IMID as outcomes") + guides(fill=F, size=F) +
+  labs(x = NULL, y = NULL, title = "A) Blood traits as exposures, IMID as outcomes") + guides(fill=F, size=F) +
   scale_y_discrete(limits = sd_order_bio) + scale_x_discrete(limits = sd_order_imid_col) +
   theme(axis.text.x = element_text(angle = 60, vjust = 1, hjust = 1), axis.line.x = element_blank(), axis.line.y = element_blank())
 
@@ -201,11 +204,12 @@ g2 <- data_db %>% dplyr::mutate(R_tce = ifelse(SE_tce < 0.5, R_tce, NA)) %>%
   ggplot(aes(y=short_description.1, x=short_description.2)) + geom_tile(aes(fill=R_tce)) + scale_fill_gradient2(limits = c(-0.4, 0.4)) +
   geom_point(data = data_db[data_db$sig_level != "0",], aes(size = sig_level)) + 
   scale_size_manual(values=c("1" = 0.5, "2" = 1.5, "3" = 2.5), labels = c("q < 0.05", "q < 0.005", "q < 0.0005")) +
-  labs(x = NULL, y = NULL, title = "b) IMID as exposures, blood traits as outcomes", fill = "CE", size = "Significance") + # guides(fill=F) +
+  labs(x = NULL, y = NULL, title = "B) IMID as exposures, blood traits as outcomes", fill = "CE", size = "Significance") + # guides(fill=F) +
   scale_y_discrete(limits = sd_order_imid_row) + scale_x_discrete(limits = sd_order_bio) +
   theme(axis.text.x = element_text(angle = 60, vjust = 1, hjust = 1), axis.line.x = element_blank(), axis.line.y = element_blank())
 
-ggarrange(g1, g2, nrow=1, widths = c(0.9, 1.1), bottom = "Outcome", left = "Exposure")
+plot <- ggarrange(g1, g2, nrow=1, widths = c(0.9, 1.1), bottom = "Outcome", left = "Exposure")
+ggsave("../Figures/wwer_fig4.pdf", device = "pdf", plot = plot, dpi = 300)
 ```
 
 
@@ -254,4 +258,322 @@ openxlsx::writeData(supp_tables, "ST21", st_phenos)
 openxlsx::writeData(supp_tables, "ST22", data)
 
 openxlsx::saveWorkbook(wb = supp_tables, file = outfile, overwrite = TRUE)
-````
+```
+
+```{r}
+# Comparative analysis running additional methods on a subset of the phenotypes.
+load("/gpfs/commons/home/bbrown/ukbb_network/saved_rdata/selected_phenotypes_sd.Rdata")
+
+# 98, 99, 103, 104, 105, 106, 119, 120, 122, 124 334-335, 400
+imid = selected_phenos$phenotype[c(98, 99, 103, 104, 105, 106, 124, 334, 335, 400)]
+# 207-233, 235, 237-253
+biomarkers = selected_phenos$phenotype[c(208:228, 233:234, 236, 238:254)]
+
+load(save_select_sumstats)
+sumstats$beta_hat <- dplyr::select(sumstats$beta_hat, all_of(imid), all_of(biomarkers))
+sumstats$se_hat <- dplyr::select(sumstats$se_hat, all_of(imid), all_of(biomarkers))
+save(sumstats, file = "/gpfs/commons/home/bbrown/ukbb_network/saved_rdata/select_sumstats_bbimid_only.Rdata")
+rm(sumstats)
+
+load(save_fit_sumstats)
+sumstats$beta_hat <- dplyr::select(sumstats$beta_hat, all_of(imid), all_of(biomarkers))
+sumstats$se_hat <- dplyr::select(sumstats$se_hat, all_of(imid), all_of(biomarkers))
+save(sumstats, file = "/gpfs/commons/home/bbrown/ukbb_network/saved_rdata/fit_sumstats_bbimid_only.Rdata")
+rm(sumstats)
+```
+
+
+```{r}
+load("/gpfs/commons/home/bbrown/ukbb_network/saved_rdata/select_sumstats_bbimid_only.Rdata")
+snps_to_use <- read_snp_list(file_pattern_snp_list)
+selected_wwer <- WWER::select_snps(sumstats, snps_to_use)
+selected_std <- WWER::select_snps(sumstats, snps_to_use, weight = F, filter = NULL)
+selected_cause <- WWER::select_snps(sumstats, snps_to_use, weight = F, filter = NULL, p_thresh = 1e-4)
+rm(sumstats)
+```
+
+```{r}
+load("/gpfs/commons/home/bbrown/ukbb_network/saved_rdata/fit_sumstats_bbimid_only.Rdata")
+# tce_res_wwer <- fit_tce(sumstats, selected_wwer, mr_method = "egger_w")
+# tce_res_mbe <- fit_tce(sumstats, selected_std, mr_method = "mbe", min_instruments = 5, verbose = TRUE)
+# tce_res_mrmix <- fit_tce(sumstats, selected_std, mr_method = "mr_mix", min_instruments = 5, verbose = TRUE)
+# tce_res_cause <- fit_tce(sumstats, selected_cause, mr_method = "cause", min_instruments = 5, verbose = TRUE)
+
+# rslurm::slurm_call(
+#   fit_tce,
+#   params = list(sumstats = sumstats, selected_snps = selected_wwer, mr_method = "egger_w"),
+#   jobname = "real_data_comp_wwer", 
+#   add_objects = c("sumstats", "selected_wwer"), 
+#   slurm_options = list(time = "1:00:00", mem = "16G"),
+#   submit = T)
+# 
+# rslurm::slurm_call(
+#   fit_tce,
+#   params = list(sumstats = sumstats, selected_snps = selected_std, mr_method = "mbe"),
+#   jobname = "real_data_comp_mbe", 
+#   add_objects = c("sumstats", "selected_std"), 
+#   slurm_options = list(time = "8:00:00", mem = "16G"),
+#   submit = T)
+
+# rslurm::slurm_call(
+#   fit_tce,
+#   params = list(sumstats = sumstats, selected_snps = selected_std, mr_method = "mr_mix"),
+#   jobname = "real_data_comp_mrmix", 
+#   add_objects = c("sumstats", "selected_std"), 
+#   slurm_options = list(time = "72:00:00", mem = "32G", "cpus-per-task" = "4"),
+#   submit = T)
+
+# rslurm::slurm_call(
+#   fit_tce,
+#   params = list(sumstats = sumstats, selected_snps = selected_std, mr_method = "ivw"),
+#   jobname = "real_data_comp_ivw",
+#   add_objects = c("sumstats", "selected_std"),
+#   slurm_options = list(time = "4:00:00", mem = "16G"),
+#   submit = T)
+# 
+# rslurm::slurm_call(
+#   fit_tce,
+#   params = list(sumstats = sumstats, selected_snps = selected_std, mr_method = "egger"),
+#   jobname = "real_data_comp_egger",
+#   add_objects = c("sumstats", "selected_std"),
+#   slurm_options = list(time = "4:00:00", mem = "16G"),
+#   submit = T)
+#
+# snps_to_use <- read_snp_list(file_pattern_snp_list)
+# selected_snps <- select_snps(sumstats, snps_to_use, p_thresh = p_thresh, verbose = TRUE)
+# save(selected_snps, file = save_snps)
+```
+
+```{r}
+wwer_res <- rslurm::get_slurm_out(rslurm::slurm_job(jobname = "real_data_comp_wwer", nodes = 1), outtype = "raw")
+mbe_res <- rslurm::get_slurm_out(rslurm::slurm_job(jobname = "real_data_comp_mbe", nodes = 1), outtype = "raw")
+mrmix_res <- rslurm::get_slurm_out(rslurm::slurm_job(jobname = "real_data_comp_mrmix", nodes = 1), outtype = "raw")
+ivw_res <- rslurm::get_slurm_out(rslurm::slurm_job(jobname = "real_data_comp_ivw", nodes = 1), outtype = "raw")
+egger_res <- rslurm::get_slurm_out(rslurm::slurm_job(jobname = "real_data_comp_egger", nodes = 1), outtype = "raw")
+
+wwer_res <- pivot_tce(wwer_res$R_tce, wwer_res$SE_tce, wwer_res$N_obs)
+mbe_res <- pivot_tce(mbe_res$R_tce, mbe_res$SE_tce, mbe_res$N_obs)
+mrmix_res <- pivot_tce(mrmix_res$R_tce, mrmix_res$SE_tce, mrmix_res$N_obs)
+ivw_res <- pivot_tce(ivw_res$R_tce, ivw_res$SE_tce, ivw_res$N_obs)
+egger_res <- pivot_tce(egger_res$R_tce, egger_res$SE_tce, egger_res$N_obs)
+```
+
+```{r}
+p_test <- 0.05/574
+make_upset_res <- function(p_val_egger, p_val_mbe, p_val_mrmix, p_val_ivw, p_val){
+  res = c()
+  if(p_val_egger < p_test) res = c(res, "Egger")
+  if(p_val_mbe < p_test) res = c(res, "MBE")
+  if(p_val_mrmix < p_test) res = c(res, "MrMix")
+  if(p_val_ivw < p_test) res = c(res, "IVW")
+  if(p_val < p_test) res = c(res, "WWER")
+  return(res)
+}
+
+jacc_index <- function(p_A, p_B, thresh){
+  set_A <- which(p_A < thresh)
+  set_B <- which(p_B < thresh)
+  num <- length(intersect(set_A, set_B))
+  denom <- length(union(set_A, set_B))
+  return(num/denom)
+}
+
+all_res <- egger_res %>% dplyr::left_join(mbe_res, by = c("Exposure", "Outcome"), suffix = c("_egger", "_mbe")) %>%
+  dplyr::left_join(mrmix_res, by = c("Exposure", "Outcome")) %>% 
+  dplyr::left_join(ivw_res, by = c("Exposure", "Outcome"), suffix = c("_mrmix", "_ivw")) %>%
+  dplyr::left_join(wwer_res, by = c("Exposure", "Outcome")) %>%
+  dplyr::filter(Exposure != Outcome)
+
+all_res <- dplyr::filter(all_res, ((Exposure %in% biomarkers)&(Outcome %in% imid))|(Exposure %in% imid)&(Outcome %in% biomarkers), !is.na(R_tce))
+
+all_res$sig_methods <- dplyr::select(all_res, starts_with("p_val")) %>% purrr::pmap(make_upset_res)
+all_res$n_sig_methods <- purrr::map_int(all_res$sig_methods, length)
+
+
+methods <- c("Egger", "MBE", "MrMix", "IVW", "WWER")
+jacc_data <- dplyr::select(all_res, starts_with("p_val"))
+colnames(jacc_data) <- methods
+pairs <- expand.grid(methods, methods)
+
+pairs$jacc_index <- purrr::map2_dbl(pairs$Var1, pairs$Var2, ~ ifelse(.x == .y, NA, jacc_index(jacc_data[[.x]], jacc_data[[.y]], thresh = p_test)))
+```
+
+
+```{r, fig.width = 10, fig.height = 4}
+theme_set(theme_classic())
+g1 <- all_res %>% filter(n_sig_methods > 0) %>% ggplot(aes(x = sig_methods)) + geom_bar() + scale_x_upset() +
+  labs(x = "Methods", y = "Count", title = "A)")
+g2 <- pairs %>% ggplot(aes(y=Var1, x=Var2)) + geom_tile(aes(fill=jacc_index)) + scale_fill_gradient() +
+  labs(x = NULL, y = NULL, fill = "Jacccard Index", title = "B)") + theme(axis.ticks = element_blank(), axis.line = element_blank())
+
+ggarrange(g1, g2, nrow = 1, widths = c(1, 0.6))
+```
+
+
+```{r}
+# Analysis adjusting p-value to test effect on estimate.
+load("/gpfs/commons/home/bbrown/ukbb_network/saved_rdata/select_sumstats_bbimid_only.Rdata")
+snps_to_use <- read_snp_list(file_pattern_snp_list)
+selected_wwer_8 <- WWER::select_snps(sumstats, snps_to_use, p_thresh = 5e-08)
+selected_wwer_10 <- WWER::select_snps(sumstats, snps_to_use, p_thresh = 5e-10)
+selected_wwer_14 <- WWER::select_snps(sumstats, snps_to_use, p_thresh = 5e-14)
+selected_wwer_20 <- WWER::select_snps(sumstats, snps_to_use, p_thresh = 5e-20)
+selected_wwer_28 <- WWER::select_snps(sumstats, snps_to_use, p_thresh = 5e-28)
+rm(sumstats)
+```
+
+
+```{r}
+load("/gpfs/commons/home/bbrown/ukbb_network/saved_rdata/fit_sumstats_bbimid_only.Rdata")
+tce_res_wwer_8 <- fit_tce(sumstats, selected_wwer_8, mr_method = "egger_w")
+tce_res_wwer_10 <- fit_tce(sumstats, selected_wwer_10, mr_method = "egger_w")
+tce_res_wwer_14 <- fit_tce(sumstats, selected_wwer_14, mr_method = "egger_w")
+tce_res_wwer_20 <- fit_tce(sumstats, selected_wwer_20, mr_method = "egger_w")
+tce_res_wwer_28 <- fit_tce(sumstats, selected_wwer_28, mr_method = "egger_w")
+rm(sumstats)
+```
+
+
+```{r}
+load("/gpfs/commons/home/bbrown/ukbb_network/saved_rdata/selected_phenotypes_sd.Rdata")
+imid = selected_phenos$phenotype[c(98, 99, 103, 104, 105, 106, 124, 334, 335, 400)]
+biomarkers = selected_phenos$phenotype[c(208:228, 233:234, 236, 238:254)]
+imid_names = c("DVT", "Asthma", "Psoriasis", "Diverticulitis", "Crohns", "Osteoarthritis", "Diabetes", "Emphysema", "Hayfever", "UC")
+bm_names = c("WBCC", "RBCC", "HC %", "MCV", "MCHC", "RBC DW", "Plt cnt", "Plt crt", "MPV", "PDW", "Lymph cnt", "Mono cnt",
+             "Baso cnt", "Lymph %", "Mono %", "Eosin %", "Baso %", "MRV", "MSCV", "IRF", "HLSR %", "Albumin", "Alkaline PP", "Alanine AT",
+             "Asparate AT", "Urea", "Calcium", "Cholesterol", "Creatinine", "CRP", "Gamma GT", "Glucose", "HBA1C", "HDL chol", "IGF1", "Phosphate",
+             "SHBG", "Tot Prot", "TG", "Urate", "Vit D")
+```
+
+
+```{r}
+res_wide_8 = pivot_tce(tce_res_wwer_8$R_tce, tce_res_wwer_8$SE_tce, tce_res_wwer_8$N_obs)
+res_wide_10 = pivot_tce(tce_res_wwer_10$R_tce, tce_res_wwer_10$SE_tce, tce_res_wwer_10$N_obs)
+res_wide_14 = pivot_tce(tce_res_wwer_14$R_tce, tce_res_wwer_14$SE_tce, tce_res_wwer_14$N_obs)
+res_wide_20 = pivot_tce(tce_res_wwer_20$R_tce, tce_res_wwer_20$SE_tce, tce_res_wwer_20$N_obs)
+res_wide_28 = pivot_tce(tce_res_wwer_28$R_tce, tce_res_wwer_28$SE_tce, tce_res_wwer_28$N_obs)
+
+res_p_comp = dplyr::bind_rows("5e-08" = res_wide_8, "5e-10" = res_wide_10, "5e-14" = res_wide_14, "5e-20" = res_wide_20, "5e-28" = res_wide_28, .id = "thresh") %>%
+  filter( ((Exposure %in% imid) & !(Outcome %in% imid)) | ((Exposure %in% biomarkers) & !(Outcome %in% biomarkers))) %>%
+  left_join(tibble(code = c(imid, biomarkers), name = c(imid_names, bm_names)), by = c("Exposure" = "code")) %>% 
+  left_join(tibble(code = c(imid, biomarkers), name = c(imid_names, bm_names)), by = c("Outcome" = "code")) %>%
+  dplyr::mutate(pair = paste(name.x, name.y, sep = ", "))
+save(res_p_comp, file="/gpfs/commons/home/bbrown/ukbb_network/saved_rdata/res_p_comp.Rdata")
+```
+
+```{r}
+load("/gpfs/commons/home/bbrown/ukbb_network/saved_rdata/res_p_comp.Rdata")
+p_test <- 0.05/574
+sig_pairs <- (res_p_comp %>% filter(thresh=="5e-08", p_val < p_test))$pair
+res_p_comp_sig <- res_p_comp %>% dplyr::filter(pair %in% sig_pairs)
+```
+
+```{r, fig.width=10, fig.height=11}
+res_p_comp_sig %>% ggplot() + facet_wrap(facets = "pair", ncol = 6) +
+  geom_pointrange(aes(thresh, abs(R_tce), ymin = abs(R_tce) - 1.96*SE_tce, ymax = abs(R_tce) + 1.96*SE_tce), fatten = 2) +
+  coord_cartesian(ylim = c(0, 0.5)) +
+  scale_x_discrete(limits=rev) +
+  labs(x = "p-value threshold", y = "|R|") + theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust=1))
+```
+
+```{r}
+res_wide_8_sig <- filter(res_p_comp_sig, thresh == "5e-08")
+res_wide_8_sig$R_tce_28 <- filter(res_p_comp_sig, thresh == "5e-28")$R_tce
+res_wide_8_sig <- res_wide_8_sig %>% dplyr::mutate(delta = sign(R_tce)*(R_tce - R_tce_28) , prop_delta = delta/abs(R_tce))
+```
+
+
+
+# Select instruments
+```{r}
+load(save_select_sumstats)
+snps_to_use <- read_snp_list(file_pattern_snp_list)
+selected_snps_10 <- select_snps(sumstats, snps_to_use, p_thresh = 5e-10, verbose = TRUE)
+selected_snps_14 <- select_snps(sumstats, snps_to_use, p_thresh = 5e-14, verbose = TRUE)
+selected_snps_20 <- select_snps(sumstats, snps_to_use, p_thresh = 5e-20, verbose = TRUE)
+selected_snps_28 <- select_snps(sumstats, snps_to_use, p_thresh = 5e-28, verbose = TRUE)
+save(selected_snps_10, file = "/gpfs/commons/home/bbrown/ukbb_network/saved_rdata/selected_snps_5e-10.Rdata")
+save(selected_snps_14, file = "/gpfs/commons/home/bbrown/ukbb_network/saved_rdata/selected_snps_5e-14.Rdata")
+save(selected_snps_20, file = "/gpfs/commons/home/bbrown/ukbb_network/saved_rdata/selected_snps_5e-20.Rdata")
+save(selected_snps_28, file = "/gpfs/commons/home/bbrown/ukbb_network/saved_rdata/selected_snps_5e-28.Rdata")
+```
+
+
+# Fit TCE matrix
+```{r}
+load(save_fit_sumstats)
+load("/gpfs/commons/home/bbrown/ukbb_network/saved_rdata/selected_snps_5e-10.Rdata")
+load("/gpfs/commons/home/bbrown/ukbb_network/saved_rdata/selected_snps_5e-14.Rdata")
+load("/gpfs/commons/home/bbrown/ukbb_network/saved_rdata/selected_snps_5e-20.Rdata")
+load("/gpfs/commons/home/bbrown/ukbb_network/saved_rdata/selected_snps_5e-28.Rdata")
+
+tce_res_10 <- fit_tce(sumstats, selected_snps_10, mr_method = "egger_w", min_instruments = 5, verbose = TRUE)
+tce_res_14 <- fit_tce(sumstats, selected_snps_14, mr_method = "egger_w", min_instruments = 5, verbose = TRUE)
+tce_res_20 <- fit_tce(sumstats, selected_snps_20, mr_method = "egger_w", min_instruments = 5, verbose = TRUE)
+tce_res_28 <- fit_tce(sumstats, selected_snps_28, mr_method = "egger_w", min_instruments = 5, verbose = TRUE)
+
+save(tce_res_10, file = "/gpfs/commons/home/bbrown/ukbb_network/saved_rdata/tce_res_5e-10.Rdata")
+save(tce_res_14, file = "/gpfs/commons/home/bbrown/ukbb_network/saved_rdata/tce_res_5e-14.Rdata")
+save(tce_res_20, file = "/gpfs/commons/home/bbrown/ukbb_network/saved_rdata/tce_res_5e-20.Rdata")
+save(tce_res_28, file = "/gpfs/commons/home/bbrown/ukbb_network/saved_rdata/tce_res_5e-28.Rdata")
+```
+
+
+```{r}
+load("/gpfs/commons/home/bbrown/ukbb_network/saved_rdata/tce_res_5e-10.Rdata")
+load("/gpfs/commons/home/bbrown/ukbb_network/saved_rdata/tce_res_5e-14.Rdata")
+load("/gpfs/commons/home/bbrown/ukbb_network/saved_rdata/tce_res_5e-20.Rdata")
+load("/gpfs/commons/home/bbrown/ukbb_network/saved_rdata/tce_res_5e-28.Rdata")
+
+res_wide_10 = pivot_tce(tce_res_10$R_tce, tce_res_10$SE_tce, tce_res_10$N_obs) %>% filter(Exposure %in% row_phenotypes)
+res_wide_14 = pivot_tce(tce_res_14$R_tce, tce_res_14$SE_tce, tce_res_14$N_obs) %>% filter(Exposure %in% row_phenotypes)
+res_wide_20 = pivot_tce(tce_res_20$R_tce, tce_res_20$SE_tce, tce_res_20$N_obs) %>% filter(Exposure %in% row_phenotypes)
+res_wide_28 = pivot_tce(tce_res_28$R_tce, tce_res_28$SE_tce, tce_res_28$N_obs) %>% filter(Exposure %in% row_phenotypes)
+
+data$R_tce_10 <- res_wide_10$R_tce
+data$SE_tce_10 <- res_wide_10$SE_tce
+data$R_tce_14 <- res_wide_14$R_tce
+data$SE_tce_14 <- res_wide_14$SE_tce
+data$R_tce_20 <- res_wide_20$R_tce
+data$SE_tce_20 <- res_wide_20$SE_tce
+data$R_tce_28 <- res_wide_28$R_tce
+data$SE_tce_28 <- res_wide_28$SE_tce
+data_sig <- data %>% filter(p_fdr < 0.05) %>% dplyr::mutate(delta = sign(R_tce)*(R_tce - R_tce_28) , prop_delta = delta/abs(R_tce))
+```
+
+```{r, fig.width=11, fig.height=11}
+theme_set(theme_classic())
+data_all = dplyr::bind_rows(
+  "5e-08" = select(data, names(res_wide_10)), "5e-10" = res_wide_10, "5e-14" = res_wide_14,
+  "5e-20" = res_wide_20, "5e-28" = res_wide_28, .id = "thresh")
+
+mentioned_pairs <- readr::read_csv("/gpfs/commons/home/bbrown/ukbb_network/saved_rdata/mentioned_pairs.csv")%>%
+  dplyr::mutate(code_pair = paste(Exposure, Outcome, sep = ", "))
+unique_phenos <- sort(unique(c(mentioned_pairs$Exposure, mentioned_pairs$Outcome)))
+names = c("Semi-skim", "Skim", "Butter", "Non-butter", "Salt", "Dietary changes", "Father death", "Nervous feelings", "DVT", "Asthma", "Psoriasis",
+          "Diverticulitis", "Crohns", "Osteoarthritis", "Sit height", "IoF: Heart", "IoF: emphysema", "IoM: diabetes", "BMI", "Overall health",
+          "Water mass", "WBCC",
+          "RBCC", "MCV", "Plateletcrit", "MPV", "PDW", "Lymph cnt", "Lymph %", "Mono %", "Eos %", "MRV", "MSCV",
+          "Albumin", "Aspartate AT", "Cholesterol", "CRP",
+          "Glucose", "HBA1C", "HDL chol", "IGF-1", "TG", "Urate", "Vit D", "Hip circ", "Emphysema", "Allergy", "Asprin", "Ibuprofen", "UC")
+mentioned_pairs <- mentioned_pairs %>% left_join(tibble(code = unique_phenos, name = names), by = c("Exposure" = "code")) %>%
+  left_join(tibble(code = unique_phenos, name = names), by = c("Outcome" = "code")) %>%
+  dplyr::mutate(pair = paste(name.x, name.y, sep = ", "))
+
+data_all <- data_all %>% left_join(tibble(code = unique_phenos, name = names), by = c("Exposure" = "code")) %>%
+  left_join(tibble(code = unique_phenos, name = names), by = c("Outcome" = "code")) %>%
+  dplyr::mutate(pair = paste(name.x, name.y, sep = ", "))
+
+data_all %>% filter(pair %in% mentioned_pairs$pair) %>% ggplot() + facet_wrap(facets = "pair", ncol = 6) +
+  geom_pointrange(aes(thresh, abs(R_tce), ymin = abs(R_tce) - 1.96*SE_tce, ymax = abs(R_tce) + 1.96*SE_tce), fatten = 2) +
+  coord_cartesian(ylim = c(0, 0.5)) +
+  scale_x_discrete(limits=rev) +
+  labs(x = "p-value threshold", y = "|R|") + theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust=1))
+```
+
+```{r}
+data_all %>% filter(thresh == "5e-08") %>%
+  mutate(R_tce_28 = res_wide_28$R_tce, delta = sign(R_tce)*(R_tce - R_tce_28) ,
+         prop_delta = delta/abs(R_tce), code_pair = paste(Exposure, Outcome, sep = ", ")) %>%
+  filter(code_pair %in% mentioned_pairs$code_pair) %>% view()
+```

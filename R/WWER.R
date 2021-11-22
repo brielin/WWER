@@ -26,7 +26,7 @@ welch_test <- function(beta1, se1, beta2, se2, welch_thresh = 0.05) {
 }
 
 #' Fits a regression of outcome on exposure using SE and weights as weights.
-#' 
+#'
 #' @param b_exp Vector of floats. SNP effects on exposure.
 #' @param b_out Vector of floats. SNP effects on outcome.
 #' @param se_exp Vector of floats. Standard error of SNP effects on exposure.

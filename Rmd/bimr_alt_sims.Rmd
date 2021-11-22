@@ -347,7 +347,7 @@ g1 <- alt_np_results_summary %>%
   geom_errorbar(aes(ymin = stat_ab - 1.96*se_stat_ab, ymax = stat_ab + 1.96*se_stat_ab, x = gamma), width = 0.025) +
   facet_wrap(vars(name), nrow=1) +
   scale_color_brewer(labels = show_labels, palette = "Dark2") +
-  labs(x = NULL, title = "a) One way alt, equal sample size", y = NULL) + guides(color = FALSE)
+  labs(x = NULL, title = "A) One way alt, equal sample size", y = NULL) + guides(color = FALSE)
 
 g2 <- alt_np_results_summary %>%
   filter(method %in% show_methods) %>%
@@ -357,7 +357,7 @@ g2 <- alt_np_results_summary %>%
   geom_errorbar(aes(ymin = stat_ab - 1.96*se_stat_ab, ymax = stat_ab + 1.96*se_stat_ab, x = gamma), width = 0.025) +
   facet_wrap(vars(name), nrow=1) +
   scale_color_brewer(labels = show_labels, palette = "Dark2") +
-  labs(x = NULL, title = "b) One way alt, Na < Nb", y = NULL) + guides(color = FALSE)
+  labs(x = NULL, title = "B) One way alt, Na < Nb", y = NULL) + guides(color = FALSE)
 
 g3 <- alt_np_results_summary %>%
   filter(method %in% show_methods) %>%
@@ -367,7 +367,7 @@ g3 <- alt_np_results_summary %>%
   geom_errorbar(aes(ymin = stat_ab - 1.96*se_stat_ab, ymax = stat_ab + 1.96*se_stat_ab, x = gamma), width = 0.025) +
   facet_wrap(vars(name), nrow=1) +
   scale_color_brewer(labels = show_labels, palette = "Dark2") +
-  labs(x = NULL, title = "c) One way alt, Na > Nb", y = NULL, color = "Method")
+  labs(x = NULL, title = "C) One way alt, Na > Nb", y = NULL, color = "Method")
 
 g4 <- bi_alt_results_summary %>%
   filter(delta == sqrt(0.01)) %>%
@@ -377,7 +377,7 @@ g4 <- bi_alt_results_summary %>%
   geom_errorbar(aes(ymin = stat_both - 1.96*se_stat_both, ymax = stat_both + 1.96*se_stat_both, x = gamma), width = 0.025) +
   facet_wrap(vars(name), nrow=1) +
   scale_color_brewer(labels = show_labels, palette = "Dark2") +
-  labs(x = NULL, title = "d) Bi-directional alt, delta = 0.1", y = NULL) + guides(color = FALSE)
+  labs(x = NULL, title = "D) Bi-directional alt, delta = 0.1", y = NULL) + guides(color = FALSE)
 
 
 g5 <- bi_alt_results_summary %>%
@@ -388,7 +388,7 @@ g5 <- bi_alt_results_summary %>%
   geom_errorbar(aes(ymin = stat_both - 1.96*se_stat_both, ymax = stat_both + 1.96*se_stat_both, x = gamma), width = 0.025) +
   facet_wrap(vars(name), nrow=1) +
   scale_color_brewer(labels = show_labels, palette = "Dark2") +
-  labs(x = NULL, title = "e) Bi-directional alt, delta = 0.17", y = NULL) + guides(color = FALSE)
+  labs(x = NULL, title = "E) Bi-directional alt, delta = 0.17", y = NULL) + guides(color = FALSE)
 
 
 g6 <- bi_alt_results_summary %>%
@@ -399,9 +399,10 @@ g6 <- bi_alt_results_summary %>%
   geom_errorbar(aes(ymin = stat_both - 1.96*se_stat_both, ymax = stat_both + 1.96*se_stat_both, x = gamma), width = 0.025) +
   facet_wrap(vars(name), nrow=1) +
   scale_color_brewer(labels = show_labels, palette = "Dark2") +
-  labs(x = NULL, title = "f) Bi-directional alt, delta = 0.32", y = NULL) + guides(color = FALSE)
+  labs(x = NULL, title = "F) Bi-directional alt, delta = 0.32", y = NULL) + guides(color = FALSE)
 
-ggarrange(g1, g2, g3, g4, g5, g6, nrow=6, left = "Power", bottom = "Gamma")
+plot = ggarrange(g1, g2, g3, g4, g5, g6, nrow=6, left = "Power", bottom = "Gamma")
+ggsave("../Figures/wwer_fig3.pdf", device = "pdf", plot = plot, dpi = 300)
 
 ```
 
@@ -416,7 +417,7 @@ g1 <- alt_np_results_summary %>%
   facet_wrap(vars(name), nrow=1) +
   ylim(0, 1) +
   scale_color_brewer(labels =show_labels, palette = "Dark2") +
-  labs(x = NULL, title = "c) One way alt reverse positivity, study A higher power", y = NULL) + guides(color = FALSE)
+  labs(x = NULL, title = "C) One way alt reverse positivity, study A higher power", y = NULL) + guides(color = FALSE)
 
 g2 <- alt_np_results_summary %>%
   filter(method %in% show_methods) %>%
@@ -426,7 +427,7 @@ g2 <- alt_np_results_summary %>%
   geom_errorbar(aes(ymin = stat_ba - 1.96*se_stat_ba, ymax = stat_ba + 1.96*se_stat_ba, x = gamma), width = 0.025) +
   facet_wrap(vars(name), nrow=1) +
   scale_color_brewer(labels =show_labels, palette = "Dark2") +
-  labs(x = NULL, title = "b) One way alt reverse positivity, study B higher power", y = NULL, color = "Method")
+  labs(x = NULL, title = "B) One way alt reverse positivity, study B higher power", y = NULL, color = "Method")
 
 g3 <- alt_np_results_summary %>%
   filter(method %in% show_methods) %>%
@@ -436,7 +437,7 @@ g3 <- alt_np_results_summary %>%
   geom_errorbar(aes(ymin = stat_ba - 1.96*se_stat_ba, ymax = stat_ba + 1.96*se_stat_ba, x = gamma), width = 0.025) +
   facet_wrap(vars(name), nrow=1) +
   scale_color_brewer(labels =show_labels, palette = "Dark2") +
-  labs(x = NULL, title = "a) One way alt reverse positivity, equal sample sizes", y = NULL) + guides(color = FALSE)
+  labs(x = NULL, title = "A) One way alt reverse positivity, equal sample sizes", y = NULL) + guides(color = FALSE)
 
 ggarrange(g3, g2, g1, nrow=3, left = "FPR, B to A direction", bottom = "Gamma, A to B direction")
 ```
@@ -453,7 +454,7 @@ g1 <- alt_wp_results_summary %>%
   ylim(0, 1) +
   theme(axis.text.x=element_blank(), axis.ticks.x=element_blank()) +
   facet_wrap(vars(name), nrow=1) +
-  labs(x = NULL, title = "a) One way alt with equal weak pleiotropy", y = NULL) + guides(fill = FALSE)
+  labs(x = NULL, title = "A) One way alt with equal weak pleiotropy", y = NULL) + guides(fill = FALSE)
 
 g2 <- alt_wp_results_summary %>%
   filter(nu == sqrt(0.2), eta == sqrt(0.2)) %>%
@@ -465,7 +466,7 @@ g2 <- alt_wp_results_summary %>%
   ylim(0, 1) +
   theme(axis.text.x=element_blank(), axis.ticks.x=element_blank()) +
   facet_wrap(vars(name), nrow=1) +
-  labs(x = NULL, title = "b) One way alt with equal strong pleiotropy", y = NULL, fill = "Method")
+  labs(x = NULL, title = "B) One way alt with equal strong pleiotropy", y = NULL, fill = "Method")
 
 g3 <- alt_wp_results_summary %>%
   filter(nu == sqrt(0.05), eta == sqrt(0.2)) %>%
@@ -477,7 +478,7 @@ g3 <- alt_wp_results_summary %>%
   ylim(0, 1) +
   theme(axis.text.x=element_blank(), axis.ticks.x=element_blank()) +
   facet_wrap(vars(name), nrow=1) +
-  labs(x = NULL, title = "c) One way alt with stronger pleiotropic effect on A", y = NULL) + guides(fill = FALSE)
+  labs(x = NULL, title = "C) One way alt with stronger pleiotropic effect on A", y = NULL) + guides(fill = FALSE)
 
 g4 <- alt_wp_results_summary %>%
   filter(nu == sqrt(0.2), eta == sqrt(0.05)) %>%
@@ -489,7 +490,7 @@ g4 <- alt_wp_results_summary %>%
   ylim(0, 1) +
   theme(axis.text.x=element_blank(), axis.ticks.x=element_blank()) +
   facet_wrap(vars(name), nrow=1) +
-  labs(x = NULL, title = "d) One way alt with stronger pleiotropic effect on B", y = NULL) + guides(fill = FALSE)
+  labs(x = NULL, title = "D) One way alt with stronger pleiotropic effect on B", y = NULL) + guides(fill = FALSE)
 
 ggarrange(g1, g2, g3, g4, nrow=4, left = "Power, A to B direction", bottom = "Method")
 ```
@@ -507,7 +508,7 @@ g1 <- alt_wp_results_summary %>%
   ylim(0, 1) +
   theme(axis.text.x=element_blank(), axis.ticks.x=element_blank()) +
   facet_wrap(vars(name), nrow=1) +
-  labs(x = NULL, title = "a) One way alt with equal weak pleiotropy", y = NULL) + guides(fill = FALSE)
+  labs(x = NULL, title = "A) One way alt with equal weak pleiotropy", y = NULL) + guides(fill = FALSE)
 
 g2 <- alt_wp_results_summary %>%
   filter(nu == sqrt(0.2), eta == sqrt(0.2)) %>%
@@ -519,7 +520,7 @@ g2 <- alt_wp_results_summary %>%
   ylim(0, 1) +
   theme(axis.text.x=element_blank(), axis.ticks.x=element_blank()) +
   facet_wrap(vars(name), nrow=1) +
-  labs(x = NULL, title = "b) One way alt with equal strong pleiotropy", y = NULL, fill = "Method")
+  labs(x = NULL, title = "B) One way alt with equal strong pleiotropy", y = NULL, fill = "Method")
 
 g3 <- alt_wp_results_summary %>%
   filter(nu == sqrt(0.05), eta == sqrt(0.2)) %>%
@@ -531,7 +532,7 @@ g3 <- alt_wp_results_summary %>%
   ylim(0, 1) +
   theme(axis.text.x=element_blank(), axis.ticks.x=element_blank()) +
   facet_wrap(vars(name), nrow=1) +
-  labs(x = NULL, title = "c) One way alt with stronger pleiotropic effect on A", y = NULL) + guides(fill = FALSE)
+  labs(x = NULL, title = "C) One way alt with stronger pleiotropic effect on A", y = NULL) + guides(fill = FALSE)
 
 g4 <- alt_wp_results_summary %>%
   filter(nu == sqrt(0.2), eta == sqrt(0.05)) %>%
@@ -543,7 +544,7 @@ g4 <- alt_wp_results_summary %>%
   ylim(0, 1) +
   theme(axis.text.x=element_blank(), axis.ticks.x=element_blank()) +
   facet_wrap(vars(name), nrow=1) +
-  labs(x = NULL, title = "d) One way alt with stronger pleiotropic effect on B", y = NULL) + guides(fill = FALSE)
+  labs(x = NULL, title = "D) One way alt with stronger pleiotropic effect on B", y = NULL) + guides(fill = FALSE)
 
 ggarrange(g1, g2, g3, g4, nrow=4, left = "FPR, B to A direction", bottom = "Method")
 ```

@@ -151,7 +151,7 @@ fit_tce <- function(sumstats, selected_snps, mr_method = "egger_w",
                            },
                            mr_mix = function(b_exp, b_out, se_exp, se_out, ...){
                              # TODO(brielin): This seems to flip the result?? Double check this.
-                             mrmix_res <- MRMix::MRMix(b_exp, -b_out, se_exp, se_out)
+                             mrmix_res <- MRMix::MRMix(b_exp, b_out, se_exp, se_out)
                              return(list("beta.hat" = mrmix_res$theta, "beta.se" = mrmix_res$SE_theta, "beta.p.value" = mrmix_res$pvalue_theta))
                            },
                            # TODO(brielin): current implementation (probably) won't work on real data
@@ -210,12 +210,13 @@ fit_tce <- function(sumstats, selected_snps, mr_method = "egger_w",
                 ...
               )
             } else {
-              X <- tibble::as_tibble(tibble::rownames_to_column(sumstats$beta_hat[, c(exp, out)], var = "snp"))
-              X <- X %>% dplyr::rename(beta_hat_1 = exp, beta_hat_2 = out)
+              X <- tibble::as_tibble(tibble::rownames_to_column(sumstats$beta_hat[, c(exp, out)], var = "snp")) %>%
+                dplyr::rename(beta_hat_1 = exp, beta_hat_2 = out)
               X$seb1 <- sumstats$se_hat[,exp]
               X$seb2 <- sumstats$se_hat[,out]
               X$A1 <- "A"
               X$A2 <- "G"
+              X <- dplyr::filter(X, !is.na(beta_hat_1), !is.na(beta_hat_2))
               variants <- dplyr::filter(X, snp %in% snps_to_use$names[snp_mask])$snp
               mr_res <- mr_method_func(X, variants)
             }

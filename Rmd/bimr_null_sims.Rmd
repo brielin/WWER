@@ -526,7 +526,8 @@ polyg_all_summary <- rbind(polyg_equal_results_summary, polyg_Na_small_results_s
 ```
 
 
-```{r, fig.height = 10, fig.width = 12.5}
+#```{r, fig.height = 7, fig.width = 8.5}
+```{r, fig.width = 12.5, fig.height=10}
 theme_set(theme_classic())
 
 # show_methods = c("egger_5e-8", "ivw_5e-8", "mbe_5e-8", "aps_5e-8", "raps_5e-8", "mr_mix_5e-8", "median_5e-8",)
@@ -542,7 +543,7 @@ g1 <- lcv_results_summary %>%
   geom_errorbar(aes(ymin = stat_ab - 1.96*se_stat_ab, ymax = stat_ab + 1.96*se_stat_ab, x = rg), width = 0.025) +
   facet_wrap(vars(name), nrow=1) + 
   scale_color_brewer(labels = show_labels, palette = "Dark2") +
-  labs(x = NULL, title = "a) Simulations under LCV model.", y = "FPR, A to B") + guides(color = FALSE)
+  labs(x = NULL, title = "A) Simulations under LCV model.", y = "FPR, A to B") + guides(color = FALSE)
 
 g2 <- lcv_results_summary %>%
   filter(method %in% show_methods) %>% 
@@ -562,7 +563,7 @@ g3 <- cause_results_summary %>%
   geom_errorbar(aes(ymin = stat_ab - 1.96*se_stat_ab, ymax = stat_ab + 1.96*se_stat_ab, x = q), width = 0.015) +
   facet_wrap(vars(name), nrow=1) + 
   scale_color_brewer(labels = show_labels, palette = "Dark2") +
-  labs(x = NULL, title = "b) Simulations under CAUSE model.", y = "FPR, A to B", color = "Method")
+  labs(x = NULL, title = "B) Simulations under CAUSE model.", y = "FPR, A to B", color = "Method")
 
 g4 <- cause_results_summary %>% 
   filter(method %in% show_methods) %>% 
@@ -583,7 +584,7 @@ g5 <- polyg_all_summary %>%  filter(grepl("PolyG: high A, high B", name), nu == 
   scale_fill_brewer(labels = show_labels, palette = "Dark2") +
   ylim(0, 1) +
   theme(axis.text.x=element_blank(), axis.ticks.x=element_blank()) +
-  labs(x = NULL, title = "c) Simulations modeling polygenicity of U.", y = "FPR, A to B") + guides(fill = FALSE)
+  labs(x = NULL, title = "C) Simulations modeling polygenicity of U.", y = "FPR, A to B") + guides(fill = FALSE)
 
 g6 <- polyg_all_summary %>%  filter(grepl("PolyG: high A, high B", name), nu == sqrt(0.3), eta == sqrt(0.3), Nb == 100000) %>%
   filter(method %in% show_methods) %>% 
@@ -596,7 +597,9 @@ g6 <- polyg_all_summary %>%  filter(grepl("PolyG: high A, high B", name), nu == 
   labs(x = "Method", y = "FPR, B to A") + guides(fill = FALSE)
 
 
-ggarrange(g1, g2, g3, g4, g5, g6, nrow=6)
+plot <- ggarrange(g1, g2, g3, g4, g5, g6, nrow=6)
+ggsave("../Figures/wwer_fig2.pdf", device = "pdf", plot = plot, dpi = 300)
+plot
 ```
 
 
