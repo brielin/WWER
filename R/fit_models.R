@@ -11,7 +11,7 @@
 #' @param exclusive Bool. True to only use SNPs significant for one phenotype
 #'   but *not* the other.
 #' @param weight Bool. True to store welch-test weights for regression.
-#' @param filter Double of NULL. If not NULL, filter variants with welch
+#' @param filter Double or NULL. If not NULL, filter variants with welch
 #'   statistic less than filter.
 #' @param verbose Bool. If true, print phenotype label during iteration.
 #' @export
