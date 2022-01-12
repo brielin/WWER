@@ -12,8 +12,8 @@ in two samples for two phenotypes:
 # beta_exp_2, se_exp_1: exposure effects and SEs, sample 2.
 # beta_out_1, se_out_1: outcome effects and SEs, sample 1.
 # beta_out_2, se_out_2: outcome effects and SEs, sample 2.
-weights = WWER::welch_test(beta_exp_1, se_exp_1, beta_out_1, se_out_1)$t
-result = WWER::WWER(beta_exp_2, se_exp_2, beta_out_2, se_out_2, weights)
+weights = WWER::welch_test(beta_exp_1, beta_out_1, se_exp_1, se_out_1)$t
+result = WWER::WWER(beta_exp_2, beta_out_2, se_exp_2, se_out_2, weights)
 ```
 
 In practice, if you are applying this in the intended setting of exploratory

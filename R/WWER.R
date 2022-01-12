@@ -11,7 +11,8 @@
 #' @param se1 Float or vector of floats, SD of estimate of mu1.
 #' @param se2 Float or vector of floats, SD of estimate of mu2.
 #' @param welch_thresh Float, p_value threshold for significance.
-welch_test <- function(beta1, se1, beta2, se2, welch_thresh = 0.05) {
+#' @export
+welch_test <- function(beta2, beta1, se2, se1, welch_thresh = 0.05) {
   n1 <- 1 / (se1**2)
   n2 <- 1 / (se2**2)
   t_val <- (abs(beta2) - abs(beta1)) / sqrt(se1^2 + se2^2)

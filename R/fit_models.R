@@ -57,7 +57,7 @@ select_snps <- function(sumstats, snps_to_use = NULL, p_thresh = 5e-8,
       s1 <- sumstats$se_hat[keep, pheno1]
       s2 <- sumstats$se_hat[keep, pheno2]
 
-      welch_res <- welch_test(b1, s1, b2, s2)
+      welch_res <- welch_test(b2, b1, s2, s1)
       weights_12 <- -welch_res$t[candidate1[keep]]
       weights_21 <- welch_res$t[candidate2[keep]]
 
