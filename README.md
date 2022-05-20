@@ -1,6 +1,6 @@
 ## Welch-weighted Egger regression (WWER)
 This github repo contains the code for the analyses described in
-``Welch-weighted Egger regression reduces false positives in Mendlian 
+``Welch-weighted Egger regression reduces false positives in Mendelian 
 randomization due to correlated pleiotropy''.
 
 The primary method functions are `WWER::welch_test()` which is used to calculate
@@ -9,7 +9,7 @@ For example, if I have a set of SNP effect esimates for LD-pruned SNPs
 in two samples for two phenotypes:
 ```
 # beta_exp_1, se_exp_1: exposure effects and SEs, sample 1.
-# beta_exp_2, se_exp_1: exposure effects and SEs, sample 2.
+# beta_exp_2, se_exp_2: exposure effects and SEs, sample 2.
 # beta_out_1, se_out_1: outcome effects and SEs, sample 1.
 # beta_out_2, se_out_2: outcome effects and SEs, sample 2.
 weights = WWER::welch_test(beta_exp_1, beta_out_1, se_exp_1, se_out_1)$t

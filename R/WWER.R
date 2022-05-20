@@ -5,6 +5,10 @@
 #'
 #' This tests the null hypothesis abs(beta1) = abs(beta2) against the two
 #' alternatives abs(beta1) > abs(beta2) and abs(beta1) < abs(beta2).
+#' Please note that here beta1 and beta2 refer to two different phenotypes,
+#' not the split GWAS samples 1 and 2. I'm not calling these 'exposure'
+#' and 'outcome' because the weight calculation is symmetric wrt which
+#' phenotype is the exposure and which is the outcome (up to sign).
 #'
 #' @param beta1 Float or vector of floats, mean of the first sample.
 #' @param beta2 Float or vector of floats, mean of the second sample.

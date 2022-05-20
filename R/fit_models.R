@@ -90,8 +90,9 @@ select_snps <- function(sumstats, snps_to_use = NULL, p_thresh = 5e-8,
 #' @param selected_snps A list of lists with names of each equal to the
 #'   phenotype names. The inner lists are boolean vectors of length equal to
 #'   the number of SNPs and TRUE indicating to use that SNP.
-#' @param mr_method String, one of c("mean", "raps"). Method to use for TCE
-#'   estimate between every pair.
+#' @param mr_method String, one of c("ps", "aps", "raps", "egger_p", "egger",
+#'   "mbe", "median", "ivw", "mr_presso", "mr_mix", "cause", "egger_w").
+#'  Method to use for TCE estimate between every pair. Default "egger_w" is WWER.
 #' @param min_instruments Integer. Return NA if there are less than
 #'   this many instruments for a pair of phenotypes.
 #' @param verbose Bpplean. True to print progress.
